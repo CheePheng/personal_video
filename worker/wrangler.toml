@@ -1,0 +1,15 @@
+name = "faceswap"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[[durable_objects.bindings]]
+name = "TUNNEL_STATE"
+class_name = "TunnelState"
+
+# SQLite-backed DO: strongly consistent, so a heartbeat write is visible to the
+# very next read. Workers KV would cache reads ~60s and serve a dead tunnel
+# hostname right after a PC restart.
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["TunnelState"]

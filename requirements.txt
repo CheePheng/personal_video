@@ -1,0 +1,15 @@
+# Runtime for the face swap app. The GPU stack (onnxruntime-gpu + torch for its
+# bundled CUDA 13 DLLs) is installed by scripts/00_install_runtime.sh, which
+# pins the exact wheels that work on Blackwell/sm_120 -- see docs/FINDINGS.md.
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+
+# Render pipeline
+onnxruntime-gpu>=1.29
+opencv-python>=4.10
+numpy>=2.0
+
+# Also required, not pip-installable:
+#   ffmpeg + ffprobe on PATH  (winget install Gyan.FFmpeg)

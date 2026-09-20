@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Face Swap</title>
+<style>
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel-2:#1c232c; --line:#2a323d;
+    --text:#e6edf3; --muted:#8b949e; --accent:#3b82f6; --accent-2:#60a5fa;
+    --ok:#3fb950; --warn:#d29922; --err:#f85149; --radius:12px;
+  }
+  :root[data-theme="light"]{
+    --bg:#f6f8fa; --panel:#fff; --panel-2:#f0f3f6; --line:#d8dee4;
+    --text:#1f2328; --muted:#636c76; --accent:#0969da; --accent-2:#0550ae;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    padding:16px; max-width:820px; margin-inline:auto;
+  }
+  h1{font-size:20px; margin:8px 0 2px; letter-spacing:-.01em}
+  .sub{color:var(--muted); font-size:13px; margin-bottom:18px}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin-bottom:14px}
+  .drop{
+    border:1.5px dashed var(--line); border-radius:var(--radius); padding:22px 14px; text-align:center;
+    cursor:pointer; transition:.15s border-color,.15s background; background:var(--panel-2);
+  }
+  .drop:hover,.drop.over{border-color:var(--accent); background:color-mix(in srgb,var(--accent) 8%,var(--panel-2))}
+  .drop .big{font-size:15px; font-weight:600}
+  .drop .hint{color:var(--muted); font-size:12.5px; margin-top:4px}
+  .picked{display:flex; align-items:center; gap:10px; margin-top:10px; font-size:13px}
+  .picked img{width:44px;height:44px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+  .picked .nm{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .grid{display:grid; grid-template-columns:1fr 1fr; gap:12px}
+  @media(max-width:620px){.grid{grid-template-columns:1fr}}
+  label.fld{display:block; font-size:12.5px; color:var(--muted); margin:0 0 4px}
+  select,input[type=range]{width:100%}
+  select{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:9px 10px; font-size:14px;
+  }
+  button{
+    background:var(--accent); color:#fff; border:0; border-radius:9px; padding:12px 18px;
+    font-size:15px; font-weight:600; cursor:pointer; width:100%;
+  }
+  button:disabled{opacity:.5; cursor:not-allowed}
+  button.ghost{background:transparent; color:var(--muted); border:1px solid var(--line); font-weight:500}
+  .bar{height:9px;background:var(--panel-2);border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+  .bar>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent),var(--accent-2));transition:width .3s}
+  .row{display:flex;justify-content:space-between;align-items:center;gap:10px;font-size:13px}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--muted);
+        white-space:pre-wrap;word-break:break-word;max-height:150px;overflow:auto;margin-top:10px;
+        background:var(--panel-2);border:1px solid var(--line);border-radius:8px;padding:9px}
+  .pill{font-size:11px;padding:3px 9px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .pill.run{color:var(--accent-2);border-color:var(--accent)}
+  .pill.done{color:var(--ok);border-color:var(--ok)}
+  .pill.err{color:var(--err);border-color:var(--err)}
+  .err-box{background:color-mix(in srgb,var(--err) 12%,transparent);border:1px solid var(--err);
+           border-radius:8px;padding:10px;font-size:13px;margin-top:10px}
+  video{width:100%;border-radius:10px;margin-top:10px;background:#000}
+  /* !important so a later, equally-specific rule (e.g. a display:grid overlay)
+     cannot silently un-hide an element. */
+  .hide{display:none !important}
+  a.dl{display:block;text-align:center;background:var(--ok);color:#fff;text-decoration:none;
+       padding:12px;border-radius:9px;font-weight:600;margin-top:10px}
+  .foot{color:var(--muted);font-size:11.5px;text-align:center;margin-top:18px}
+
+  /* ---------- library ---------- */
+  .lib-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px}
+  .lib-head h2{font-size:16px;margin:0;letter-spacing:-.01em}
+  .lib-count{color:var(--muted);font-size:12.5px}
+  .lib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
+  .tile{background:var(--panel-2);border:1px solid var(--line);border-radius:10px;overflow:hidden;
+        display:flex;flex-direction:column}
+  .tile .thumbwrap{position:relative;aspect-ratio:16/9;background:#000;cursor:pointer;overflow:hidden}
+  .tile .thumbwrap img{width:100%;height:100%;object-fit:cover;display:block;
+        transition:transform .2s,opacity .2s}
+  .tile .thumbwrap:hover img{transform:scale(1.04);opacity:.85}
+  .tile .noimg{width:100%;height:100%;display:grid;place-items:center;color:var(--muted);font-size:12px}
+  .tile .play{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none}
+  .tile .play span{width:42px;height:42px;border-radius:99px;background:rgba(0,0,0,.55);
+        border:1px solid rgba(255,255,255,.35);display:grid;place-items:center;color:#fff;font-size:15px;
+        padding-left:3px}
+  .tile .dur{position:absolute;right:6px;bottom:6px;background:rgba(0,0,0,.75);color:#fff;
+        font-size:11px;padding:1px 6px;border-radius:4px;font-variant-numeric:tabular-nums}
+  .tile .meta{padding:9px 10px;display:flex;flex-direction:column;gap:5px}
+  .tile .when{font-size:12.5px;font-weight:600}
+  .tile .tags{display:flex;flex-wrap:wrap;gap:4px}
+  .tile .tag{font-size:10.5px;padding:2px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+  .tile .acts{display:flex;gap:6px;margin-top:2px}
+  .tile .acts a,.tile .acts button{
+        flex:1;font-size:12px;padding:6px 8px;border-radius:7px;text-align:center;text-decoration:none;
+        font-weight:600;width:auto;cursor:pointer;border:1px solid var(--line)}
+  .tile .acts a{background:var(--accent);color:#fff;border-color:transparent}
+  .tile .acts button{background:transparent;color:var(--muted)}
+  .tile .acts button:hover{color:var(--err);border-color:var(--err)}
+  .lib-empty{color:var(--muted);font-size:13px;text-align:center;padding:18px 8px}
+  /* Lightbox for playing a library item without leaving the page. */
+  /* .hide is declared earlier in this sheet, so an equal-specificity rule here
+     would beat it and pin the overlay open. Guard against that explicitly
+     rather than relying on source order. */
+  .modal{position:fixed;inset:0;background:rgba(0,0,0,.82);display:grid;place-items:center;
+         padding:20px;z-index:50}
+  .modal.hide{display:none}
+  .modal .inner{width:100%;max-width:900px}
+  .modal video{margin:0}
+  .modal .close{background:transparent;border:1px solid rgba(255,255,255,.4);color:#fff;
+         width:auto;padding:7px 14px;font-size:13px;margin-top:10px}
+</style>
+</head>
+<body>
+
+<h1>Face Swap</h1>
+<div class="sub">Runs locally on your RTX 5070 Ti. Nothing is uploaded to any third party.</div>
+
+<div class="card" id="pick">
+  <div class="grid">
+    <div>
+      <label class="fld">1 &middot; Video to edit</label>
+      <div class="drop" id="dropV">
+        <div class="big">Choose video</div>
+        <div class="hint">mp4, mov, mkv, webm</div>
+      </div>
+      <input type="file" id="fileV" accept="video/*" class="hide">
+      <div class="picked hide" id="pickV"><span class="nm"></span></div>
+    </div>
+    <div>
+      <label class="fld">2 &middot; Face to use</label>
+      <div class="drop" id="dropF">
+        <div class="big">Choose photo</div>
+        <div class="hint">clear, front-facing</div>
+      </div>
+      <input type="file" id="fileF" accept="image/*" class="hide">
+      <div class="picked hide" id="pickF"><img alt=""><span class="nm"></span></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="grid">
+    <div>
+      <label class="fld" for="quality">Quality</label>
+      <select id="quality">
+        <option value="balanced" selected>Balanced &mdash; sharpened, recommended</option>
+        <option value="fast">Fast &mdash; no sharpening, ~2&times; quicker</option>
+        <option value="best">Best &mdash; sharpened + finds harder faces</option>
+      </select>
+    </div>
+    <div>
+      <label class="fld" for="whichface">Which face in the video</label>
+      <select id="whichface">
+        <option value="reference" selected>One person (most prominent)</option>
+        <option value="many">Everyone in frame</option>
+      </select>
+    </div>
+  </div>
+  <div style="margin-top:14px">
+    <button id="go" disabled>Swap face</button>
+  </div>
+</div>
+
+<div class="card hide" id="prog">
+  <div class="row">
+    <strong id="stage">Preparing</strong>
+    <span class="pill run" id="pill">working</span>
+  </div>
+  <div class="bar" style="margin:10px 0 6px"><i id="fill"></i></div>
+  <div class="row"><span class="mono" style="background:none;border:0;padding:0" id="pct">0%</span>
+    <span class="mono" style="background:none;border:0;padding:0" id="eta"></span></div>
+  <div class="mono hide" id="log"></div>
+  <div style="margin-top:12px"><button class="ghost" id="cancel">Cancel</button></div>
+</div>
+
+<div class="card hide" id="result">
+  <div class="row"><strong>Done</strong><span class="pill done">complete</span></div>
+  <video id="vid" controls playsinline></video>
+  <a class="dl" id="dl" download>Download video</a>
+  <div style="margin-top:10px"><button class="ghost" id="again">Start another</button></div>
+</div>
+
+<div class="card hide" id="failed">
+  <div class="row"><strong>Failed</strong><span class="pill err">error</span></div>
+  <div class="err-box" id="errmsg"></div>
+  <div style="margin-top:10px"><button class="ghost" id="retry">Try again</button></div>
+</div>
+
+<div class="card" id="library">
+  <div class="lib-head">
+    <h2>Your library</h2>
+    <span class="lib-count" id="libCount"></span>
+  </div>
+  <div class="lib-grid" id="libGrid"></div>
+  <div class="lib-empty" id="libEmpty">No renders yet. Your finished videos will appear here.</div>
+</div>
+
+<div class="modal hide" id="modal">
+  <div class="inner">
+    <!-- No `autoplay`: iOS/iPadOS blocks autoplay for videos with sound, so it
+         silently fails there and it fights the user's tap elsewhere. We call
+         play() from the tap handler instead, which counts as a user gesture. -->
+    <video id="modalVid" controls playsinline preload="metadata"></video>
+    <button class="close" id="modalClose">Close</button>
+  </div>
+</div>
+
+<div class="foot">Local render &middot; no API keys &middot; no usage limits</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

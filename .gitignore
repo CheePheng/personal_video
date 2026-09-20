@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Data / media — never commit user videos or faces
+data/uploads/
+data/outputs/
+data/jobs/
+data/thumbs/
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.jpg
+*.jpeg
+*.png
+!app/static/**/*.png
+!app/static/**/*.svg
+
+# Models (multi-GB; kept out of git, see README for what each one does)
+models/
+*.onnx
+*.pth
+*.pt
+
+# Local config / secrets
+.env
+*.local.json
+
+# Logs & temp
+logs/
+*.log
+tmp/
+
+# Local secrets (never commit)
+data/.password
+data/.register_secret
+data/.session_secret
+data/benchmarks/
+
+# Node (worker tooling only)
+node_modules/
