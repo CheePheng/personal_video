@@ -1181,3 +1181,77 @@ leaves a frame untouched rather than guessing when confidence drops.
 The multi-person regression tests stay too, as defensive coverage. They are no
 longer a development priority, but a change that silently broke identity
 tracking should still fail the suite.
+
+# V2.2: measurement validity
+
+Three faults were found by profiling the renderer on a machine with nothing
+else on the GPU. None of them made anything crash; all of them made numbers
+mean something other than what they said.
+
+## The synthetic suite was a self-swap
+
+`make_testclips.build(face_a, face_b)` pastes `face_a` into every clip, and
+`_face_a.png` is also the source identity handed to the renderer. So the A–S
+matrix swapped a face onto itself, and its 0.96–0.97 identity scores largely
+measured "the pipeline did not destroy a face that already matched".
+
+Those clips remain valid for what they were built for: tracking ground truth,
+audio preservation, scene cuts, VFR handling, resolution handling. They are
+not evidence of identity transfer.
+
+`data/testclips/ab/` is the replacement for identity claims:
+
+| role | identity | source |
+|---|---|---|
+| source photo | A | NASA official portrait, public domain |
+| subject in every clip | B | NASA official portrait, public domain |
+| distractor | C | NASA official portrait, public domain |
+
+`scripts/make_ab_fixtures.py` refuses to emit the set unless **both** ArcFace
+and SFace agree the three are distinct (ceiling 0.25; worst observed pair
+0.1387). Rights-cleared, so the fixtures are reproducible by anyone.
+
+## Presets had two definitions
+
+`jobs.py` built the shipping presets; `pipeline.render()` fell back to a bare
+`PipelineConfig(swapper="hyperswap_1a_256")` when handed no config. Balanced
+actually runs GPEN BFR 512 at 70%, so every harness that called `render()`
+directly measured a cheaper pipeline and reported it as Balanced — a 1.4–1.6x
+error in ms/frame and roughly 2 GB in VRAM.
+
+`pipeline.apply_preset()` is now the only definition, and `jobs.py` calls it.
+
+`quality="auto"` reaching `render()` is refused rather than defaulted. Auto
+Max lives in the job layer because it must benchmark before it can name a
+winner; silently substituting the default made a default render indis-
+tinguishable from an Auto Max result.
+
+## Whole-card VRAM was reported as renderer VRAM
+
+`sessions.gpu_info()` reads `nvidia-smi --query-gpu=memory.used`, which covers
+every process on the card. Measured with the GPU dedicated to rendering:
+
+| phase | peak card | minus idle floor |
+|---|---|---|
+| Balanced 720p | 6.0 GB | 4.6 GB |
+| Balanced 4K | 6.6 GB | 5.2 GB |
+| Auto Max benchmark | 12.3 GB | 11.0 GB |
+
+Idle floor is ~1.3 GB. The benchmark phase, not rendering, is what approaches
+the card's limit — which is what the session-release logic in `benchmark.py`
+exists to manage.
+
+## Where the frame time actually goes
+
+Profiled per stage (`scripts/profile_stages.py`). GPU utilisation was 6–15%
+on the swap-only path, and the reason was not the GPU and not I/O — the
+encoder write costs 0.5 ms/frame and the frame copy 0.01 ms. It was
+compositing: `paste_back` warped the patch and mask into full-frame float32
+buffers and blended every pixel, 164 ms/frame at 4K to composite a face
+covering a few percent of the image. Restricting it to the mapped bounding
+box took 4K from 315.5 to 151.3 ms/frame.
+
+Two smaller ones alongside it: the colour correction was applied twice per
+frame when temporal smoothing was on (raw, then smoothed on top of the
+already-corrected patch), and `SceneCutDetector` downsampled every frame four
+times instead of once.

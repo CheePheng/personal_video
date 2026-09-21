@@ -87,6 +87,28 @@ RECOGNIZERS: dict[str, ModelSpec] = {
 }
 
 # ---------------------------------------------------------------- swappers
+# PIXEL BOOST IS DISABLED ON EVERY SWAPPER, and the reason is worth keeping.
+#
+# Boost tiles a high-resolution aligned crop and runs the 256px model on each
+# tile separately. Measured on the A->B set (source A, subject B -- genuinely
+# different people), 8 clips, 30 samples per level:
+#
+#     boost   ArcFace (selector)   SFace (holdout)   ms/frame
+#      256          0.6566              0.6345          83.3
+#      768          0.0361              0.0294         223.0
+#     1024          0.0160             -0.0271         342.7
+#
+# 0.03 is what two unrelated people score (A vs B measures 0.0215). At 768
+# and above the swap does not produce a worse likeness, it produces none --
+# each tile sees a fragment with no global facial structure, so the identity
+# conditioning has nothing coherent to act on. It costs 2.7-4.1x more to do
+# that. Both recognisers agree, and the worst frame at 256 (0.6367) beats the
+# best frame at 1024 (0.0004).
+#
+# Two earlier studies concluded the opposite. Both ran on the synthetic
+# suite, which pasted the SOURCE's own face into the clip -- a self-swap, so
+# the face underneath already matched and the metric was really scoring tile
+# seams. Do not re-enable boost on evidence from those clips.
 # Only models whose identity conditioning we can drive directly are registered.
 # inswapper_128 is excluded on licensing (see docs/MODELS.md); simswap/ghost/
 # hififace need an arcface_converter_* matrix, registered alongside them.
@@ -97,7 +119,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1a_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(768, 1024),   # 512 excluded; see the note above
+        pixel_boost=(),            # disabled; see PIXEL BOOST note above
         notes="V1's model. Strong identity, ships its own mask."),
     "hyperswap_1b_256": ModelSpec(
         name="hyperswap_1b_256", filename="hyperswap_1b_256.onnx", role="swapper",
@@ -105,7 +127,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1b_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(768, 1024),   # 512 excluded; see the note above
+        pixel_boost=(),            # disabled; see PIXEL BOOST note above
         notes="Sibling of 1a; different identity/expression balance."),
     "hyperswap_1c_256": ModelSpec(
         name="hyperswap_1c_256", filename="hyperswap_1c_256.onnx", role="swapper",
@@ -113,7 +135,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1c_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(768, 1024),   # 512 excluded; see the note above
+        pixel_boost=(),            # disabled; see PIXEL BOOST note above
         notes="Sibling of 1a; benchmarked, not assumed better."),
     "alphaface_256": ModelSpec(
         name="alphaface_256", filename="alphaface_256.onnx", role="swapper",

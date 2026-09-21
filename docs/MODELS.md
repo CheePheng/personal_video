@@ -87,7 +87,7 @@ embedding**, and output their own mask.
 
 | Model | Role | Size | Input | Template | Normalisation | Licence (code / weights) | Note |
 |---|---|---|---|---|---|---|---|
-| `hyperswap_1a_256` | swapper | 402.7 MB | 256 | `arcface_128` | mean/std 0.5 (`-1..1`) | **"ResearchRAIL-MS"** - terms indeterminate (see below) | V1's model. Strong identity, ships its own mask. Pixel boost 256/512/768/1024. |
+| `hyperswap_1a_256` | swapper | 402.7 MB | 256 | `arcface_128` | mean/std 0.5 (`-1..1`) | **"ResearchRAIL-MS"** - terms indeterminate (see below) | V1's model. Strong identity, ships its own mask. Pixel boost disabled (collapses identity on a true A->B swap). |
 | `hyperswap_1b_256` | swapper | 402.7 MB | 256 | `arcface_128` | mean/std 0.5 (`-1..1`) | **"ResearchRAIL-MS"** - terms indeterminate | Sibling of 1a; different identity/expression balance. |
 | `hyperswap_1c_256` | swapper | 402.7 MB | 256 | `arcface_128` | mean/std 0.5 (`-1..1`) | **"ResearchRAIL-MS"** - terms indeterminate | Sibling of 1a; benchmarked, not assumed better. |
 

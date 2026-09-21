@@ -260,35 +260,49 @@ numbers did not support them:
 
 | Feature | Measurement | Decision |
 |---|---|---|
-| **Pixel boost** | 512 measurably worst on both judges; 768/1024 disputed -- ArcFace says marginally worse, an independent judge says better | **512 off, 768/1024 offered.** See the correction below. |
+| **Pixel boost** | On a true A->B swap, identity collapses to 0.03-0.04 at 768 and 1024 -- what two strangers score -- while costing 2.7-4.1x more | **Disabled entirely.** See below. |
 | **TensorRT** | Provider is listed by onnxruntime but `nvinfer_10.dll` is absent, so sessions silently fall back to CUDA | **Not evaluated.** Reported as such rather than as a bogus 1.00x tie. |
 
 #### A correction worth reading
 
-The first pixel-boost measurement concluded "harmful at every level" and the
-option was withdrawn. That measurement scored identity with **ArcFace -- the
-same model the swap is conditioned on**, and pixel boost changes exactly the
-frequency content where an in-loop recogniser is least trustworthy.
+Pixel boost was withdrawn, then re-enabled, then withdrawn again. The round
+trip is the point.
 
-Re-measured over 30 samples from 6 clips against **SFace**, an independently
-trained recogniser (Apache-2.0) held out of the optimisation loop:
+Boost tiles a high-resolution aligned crop and runs the 256px model on each
+tile independently. The first study said it hurt; the second, scored with
+SFace (an independently trained recogniser held out of the loop), said 768
+and 1024 slightly *helped*, so they were re-enabled.
 
-| boost | ArcFace (in-loop) | SFace (judge) | sharpness |
+Both studies ran on the synthetic suite -- which pasted the **source's own
+face** into every clip. Swapping a face onto itself leaves a correct face
+underneath no matter what the tiling does, so those runs were really scoring
+tile seams, and 768's smoother seams read as "better identity".
+
+Re-measured on the A->B set, where the source is a genuinely different person
+from the subject (8 clips, 30 samples per level):
+
+| boost | ArcFace (selector) | SFace (holdout) | ms/frame |
 |---|---|---|---|
-| 256 | 0.9462 | 0.9034 | 863 |
-| 512 | 0.9239 (−0.022) | 0.8892 (−0.014) | 896 |
-| **768** | 0.9419 (−0.004) | **0.9151 (+0.012)** | 891 |
-| 1024 | 0.9435 (−0.003) | **0.9122 (+0.009)** | 888 |
+| **256** | **0.6566** | **0.6345** | 83.3 |
+| 768 | 0.0361 | 0.0294 | 223.0 |
+| 1024 | 0.0160 | −0.0271 | 342.7 |
 
-The judges **agree** 512 is worst — two tiles split the face down the middle.
-They **disagree in sign** at 768 and 1024. So 512 stays off, 768/1024 are
-offered, and the blanket claim is retracted.
+Two unrelated people score about 0.02 on these recognisers. So at 768 and
+above the swap is not producing a worse likeness -- it is producing none.
+Each tile receives a fragment with no global facial structure, leaving the
+identity conditioning nothing coherent to act on. Both judges agree, by a
+margin of 0.6, and the worst frame at 256 beats the best frame at 1024.
 
-Which judge is right is *not* settled by these numbers; that needs human
-evaluation. What is settled is that the original conclusion came from a closed
-loop and was stated more flatly than the evidence supported. The judge lives in
-`app/render/judges.py` and is deliberately **not** wired into Auto Max — a judge
-that participates in selection stops being a judge.
+`pixel_boost=()` on every swapper. Do not re-enable it on evidence from the
+self-swap clips.
+
+Note also the honest ceiling: **0.6566, not 0.97.** Every "0.96 identity"
+figure this project used to quote was a face swapped onto itself. 0.65 is
+comfortably "same person" for ArcFace and is the real number to improve on.
+
+The holdout judge lives in `app/render/judges.py` and is deliberately **not**
+wired into Auto Max -- a judge that participates in selection stops being a
+judge. `scripts/test_scoring.py` asserts that.
 
 Detector choice was also settled by measurement: YOLOFace reached 1.000 recall
 at 8.2 ms against 0.829 for both SCRFD and RetinaFace, so it stays primary,
