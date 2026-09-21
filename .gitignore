@@ -44,3 +44,7 @@ data/benchmarks/
 
 # Node (worker tooling only)
 node_modules/
+
+# Browser-automation scratch output
+.playwright-mcp/
+*-ui.png
