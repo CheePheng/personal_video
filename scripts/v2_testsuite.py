@@ -51,12 +51,18 @@ def _streams(info: dict, kind: str) -> list[dict]:
     return [s for s in info.get("streams", []) if s.get("codec_type") == kind]
 
 
-def run_clip(name: str, quality: str = "quality") -> dict[str, Any]:
+# The source photo lives at the top of the clips tree regardless of which
+# sub-directory a target clip comes from, so it is resolved separately.
+SOURCE_FACE = CLIPS / "_face_a.png"
+
+
+def run_clip(name: str, quality: str = "quality",
+             clip_dir: Optional[Path] = None) -> dict[str, Any]:
     """Render one clip and collect everything the checks need."""
     from app.render import pipeline
     from app.render.types import PipelineConfig, RenderError
 
-    clip = CLIPS / f"{name}.mp4"
+    clip = (clip_dir or CLIPS) / f"{name}.mp4"
     out = OUTDIR / f"{name}__{quality}.mp4"
     OUTDIR.mkdir(parents=True, exist_ok=True)
 
@@ -71,7 +77,7 @@ def run_clip(name: str, quality: str = "quality") -> dict[str, Any]:
     rec: dict[str, Any] = {"clip": name, "quality": quality}
     t0 = time.time()
     try:
-        res = pipeline.render([str(CLIPS / "_face_a.png")], str(clip), str(out), opts)
+        res = pipeline.render([str(SOURCE_FACE)], str(clip), str(out), opts)
     except RenderError as e:
         rec.update(ok=False, error=str(e)[:300])
         return rec

@@ -56,8 +56,19 @@ REAL_CLIPS = [("real_A_motion", "real footage: camera + subject motion"),
 
 
 def check_resolution(rec: dict, w: int, h: int) -> list[tuple[str, bool, str]]:
-    v = rec.get("video") or {}
-    got = (v.get("width"), v.get("height"))
+    """Read the resolution from the OUTPUT file.
+
+    run_clip does not carry the video geometry in its record, so probe the
+    rendered file directly -- that is the thing the claim is about anyway.
+    """
+    from v2_testsuite import _streams, probe
+    out = rec.get("output")
+    if not out or not Path(out).exists():
+        return [(f"renders at {w}x{h}", False, "no output file")]
+    vs = _streams(probe(Path(out)), "video")
+    if not vs:
+        return [(f"renders at {w}x{h}", False, "no video stream")]
+    got = (int(vs[0].get("width", 0)), int(vs[0].get("height", 0)))
     return [(f"renders at {w}x{h}", got == (w, h), f"got {got[0]}x{got[1]}")]
 
 
@@ -123,14 +134,7 @@ def main(argv: list[str]) -> int:
             print(f"  [MISS] {label} (no clip)")
             real_results.append({"clip": stem, "status": "MISSING"})
             continue
-        # run_clip resolves against CLIPS, so point it at the real sub-dir.
-        import v2_testsuite as ts
-        old = ts.CLIPS
-        ts.CLIPS = REAL
-        try:
-            rec = ts.run_clip(stem, "quality")
-        finally:
-            ts.CLIPS = old
+        rec = run_clip(stem, "quality", clip_dir=REAL)
         checks = check_common(rec)
         if rec.get("ok"):
             t = rec.get("tracking") or {}
@@ -160,8 +164,7 @@ def main(argv: list[str]) -> int:
         rec = r.get("record") or {}
         note = ""
         if rec.get("ok"):
-            v = rec.get("video") or {}
-            note = f"{v.get('width')}x{v.get('height')}"
+            note = f"{rec.get('frames')}f"
             if rec.get("src_audio"):
                 note += " +audio"
         elif r["status"] == "FAIL":
