@@ -280,8 +280,15 @@ def composite_score(m: dict) -> tuple[float, dict]:
         return 1.0 - x if invert else x
 
     parts = {
-        # 0.2 cosine is a poor swap, 0.65 is excellent.
-        "identity": norm(m.get("identity_mean"), 0.20, 0.65),
+        # Identity range must span what the CURRENT models actually produce,
+        # or the highest-weighted term silently stops discriminating.
+        # The original 0.20-0.65 was calibrated before the swapper set grew:
+        # every registered model now scores 0.60-0.98 on a clear face, so both
+        # a 0.77 candidate and a 0.96 one saturated at full marks and the
+        # decision fell through to blending and speed. That is how a 0.77
+        # pipeline once beat a 0.96 one. 0.30-0.95 keeps a real gradient
+        # across the range these models occupy.
+        "identity": norm(m.get("identity_mean"), 0.30, 0.95),
         "identity_switches": 1.0 if not m.get("identity_switches") else 0.0,
         "temporal": (norm(m.get("identity_stability_mean"), 0.80, 0.99) * 0.5
                      + norm(m.get("flow_flicker_mean"), 2.0, 14.0, invert=True) * 0.3

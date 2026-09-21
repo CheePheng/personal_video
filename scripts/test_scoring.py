@@ -179,6 +179,18 @@ def test_composite_behaviour() -> None:
     check("bad candidate scores far below good", bad_score < base_score * 0.6,
           f"{bad_score:.4f} vs {base_score:.4f}")
 
+    # Identity must DISCRIMINATE across the range real models produce, not
+    # saturate. This guards the exact failure that let a 0.77-identity
+    # pipeline outscore a 0.96 one.
+    good_id, _ = metrics.composite_score(degrade(base, "identity_mean", 0.96))
+    mid_id, _ = metrics.composite_score(degrade(base, "identity_mean", 0.77))
+    check("identity discriminates between 0.77 and 0.96", good_id - mid_id > 0.04,
+          f"{mid_id:.4f} -> {good_id:.4f} (gap {good_id - mid_id:.4f})")
+    for lo, hi in ((0.45, 0.60), (0.60, 0.75), (0.75, 0.90)):
+        a, _ = metrics.composite_score(degrade(base, "identity_mean", lo))
+        b, _ = metrics.composite_score(degrade(base, "identity_mean", hi))
+        check(f"identity gradient across {lo}-{hi}", b > a, f"{a:.4f} -> {b:.4f}")
+
     # A missing metric must not crash or silently win.
     partial = {"identity_mean": 0.5}
     ps, _ = metrics.composite_score(partial)
