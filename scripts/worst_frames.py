@@ -116,7 +116,14 @@ def main() -> int:
         prev_kps = None
 
         for i, frame in sorted(got.items()):
-            faces = detection.detect_robust(frame, opts.detect_threshold, "quality")
+            # detect_with_fallback, NOT detect_robust: production goes
+            # through the SCRFD recall fallback, and measuring the primary
+            # alone reports frames as lost that ship perfectly well. That
+            # mistake made an occlusion sequence look like a pipeline defect
+            # when the shipping path already rescues all four frames.
+            faces = detection.detect_with_fallback(
+                frame, opts.detect_threshold, "quality",
+                opts.detector, opts.detector_fallback)
             if not faces:
                 rows.append({"clip": stem, "frame": i, "identity": None,
                              "note": "no face detected in INPUT"})

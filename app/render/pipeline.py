@@ -103,9 +103,29 @@ def apply_preset(opts: "RenderOptions") -> "RenderOptions":
         opts.use_parsing = False
         opts.use_occlusion = False
     else:
+        # No restoration by default. Measured on the A->B set across 10
+        # non-degenerate categories, GPEN BFR 512 at 70% -- the previous
+        # default -- LOSES on every selector metric and costs 62% more time:
+        #
+        #                arcMean   sfMean     gap   arcWorst   ms/f
+        #   none          0.6657   0.6363  0.3823     0.5599   72.5
+        #   gpen@70       0.6583   0.6455  0.3661     0.5542  117.5
+        #
+        # "gap" is similarity-to-source minus similarity-to-target, which is
+        # what a swap is for. The pipeline is deterministic (three identical
+        # runs, zero spread), so these are small but real, not noise.
+        #
+        # Every restorer degrades identity monotonically as blend rises, and
+        # gains sharpness doing it (GFPGAN@100: -0.0416 arc, +123 sharpness).
+        # That is the "sharper generic face" failure, and it is why blend is
+        # not simply turned down rather than off: at every level tested the
+        # honest comparison against no restoration at all was not won.
+        #
+        # Auto Max may still SELECT a restorer per video -- it is scored per
+        # candidate there. This is only the fixed default.
         opts.config = PipelineConfig(swapper="hyperswap_1a_256",
-                                     enhancer="gpen_bfr_512",
-                                     enhancer_blend=0.7, mask="full")
+                                     enhancer=None, enhancer_blend=0.0,
+                                     mask="full")
     return opts
 
 
