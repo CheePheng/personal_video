@@ -6,16 +6,22 @@ Design notes (forced by constraints, not taste):
   request that starts a job MUST return a job id immediately. Renders therefore
   run on a background thread and the browser polls for status.
 
-* Progress is a real count of work done. The swap pipeline reports
+* Progress is a real count of work done. The V2 pipeline reports
   ``frames_processed / total_frames`` directly, so the bar reflects frames
   actually encoded rather than anything scraped from a console.
 
 * State lives in SQLite so a browser refresh -- or an app restart -- does not
   lose a running job.
+
+* Two engines are selectable. ``v2`` is the current pipeline (tracking, masks,
+  colour match, automatic benchmarking); ``v1`` is the earlier single-model
+  renderer, kept as a regression baseline so the two can be compared on
+  identical inputs.
 """
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 import time
@@ -28,11 +34,16 @@ DATA = Path(__file__).resolve().parent.parent / "data"
 DB_PATH = DATA / "jobs" / "jobs.db"
 
 # Each stage's share of the overall bar. 'processing' dominates because it is
-# the only stage whose cost scales with video length; the rest are near-fixed.
+# the only stage whose cost scales with video length; the benchmark stages only
+# appear in AUTO mode and are bounded by the sample count.
 STAGE_WEIGHTS: list[tuple[str, float]] = [
     ("preparing", 0.02),
-    ("detecting", 0.03),
-    ("processing", 0.90),
+    ("analysing video", 0.02),
+    ("benchmarking swap models", 0.05),
+    ("testing restoration", 0.04),
+    ("selecting best pipeline", 0.01),
+    ("detecting", 0.01),
+    ("processing", 0.80),
     ("encoding", 0.03),
     ("restoring audio", 0.02),
 ]
@@ -118,10 +129,12 @@ def delete_job(jid: str) -> None:
 class JobRunner(threading.Thread):
     """Runs one render on a background thread, writing progress to SQLite."""
 
-    def __init__(self, jid: str, source: str, target: str, output: str, opts: dict[str, Any]):
+    def __init__(self, jid: str, sources: list[str], target: str, output: str,
+                 opts: dict[str, Any]):
         super().__init__(daemon=True, name=f"job-{jid}")
         self.jid = jid
-        self.source = source
+        self.sources = sources if isinstance(sources, list) else [sources]
+        self.source = self.sources[0]
         self.target = target
         self.output = output
         self.opts = opts
@@ -144,10 +157,24 @@ class JobRunner(threading.Thread):
     def _on_progress(self, stage: str, pct: float, extra: dict[str, Any]) -> None:
         now = time.time()
         frames, total = extra.get("frames"), extra.get("total")
-        msg = f"{stage} - frame {frames} of {total}" if frames and total else stage
+        if frames and total:
+            msg = f"frame {frames} of {total}"
+            fps = extra.get("fps")
+            if fps:
+                msg += f"  -  {fps:.1f} fps"
+                remain = (total - frames) / max(fps, 1e-6)
+                if remain > 1:
+                    msg += f"  -  ~{int(remain // 60)}m {int(remain % 60)}s left"
+        elif extra.get("candidate"):
+            msg = f"{extra['candidate']}  ({extra.get('index', '?')}/{extra.get('total', '?')})"
+        elif extra.get("winner"):
+            msg = f"selected: {extra['winner']}"
+        else:
+            msg = stage
 
         # Always persist a stage change; throttle mid-stage ticks.
-        final = stage in ("complete", "encoding", "restoring audio")
+        final = stage in ("complete", "encoding", "restoring audio",
+                          "selecting best pipeline")
         if not final and (now - self._last_write) < 0.5:
             return
         self._last_write = now
@@ -158,34 +185,13 @@ class JobRunner(threading.Thread):
         self.cancelled = True
 
     def run(self) -> None:
-        # Imported here, not at module import: loading onnxruntime pulls in the
-        # whole CUDA stack, which should not happen just because the web app
-        # started.
-        from app import swapper
-
         update(self.jid, status="running", started_at=time.time(), progress=0.0,
                phase="preparing", message="preparing")
+        engine = self.opts.get("engine", "v2")
         try:
-            result = swapper.run_swap(
-                source_image=self.source,
-                target_video=self.target,
-                output_path=self.output,
-                on_progress=self._on_progress,
-                swap_all_faces=(self.opts.get("face_mode") == "many"),
-                quality=self.opts.get("quality", "balanced"),
-                should_cancel=lambda: self.cancelled,
-            )
-        except swapper.SwapError as e:
-            if self.cancelled or str(e) == "cancelled":
-                update(self.jid, status="cancelled", finished_at=time.time())
-            else:
-                # A SwapError is a real, explainable fault -- show it verbatim.
-                update(self.jid, status="error", error=str(e)[:4000],
-                       finished_at=time.time())
-            return
+            result = self._run_v1() if engine == "v1" else self._run_v2()
         except Exception as e:  # noqa: BLE001
-            update(self.jid, status="error", finished_at=time.time(),
-                   error=f"{type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}"[:4000])
+            self._fail(e)
             return
         finally:
             with _lock:
@@ -197,14 +203,87 @@ class JobRunner(threading.Thread):
                    error="render finished but produced no output file")
             return
 
+        # Persist the full render record so the library can show exactly which
+        # pipeline produced this file months later.
+        opts = dict(self.opts)
+        opts["result"] = result
         update(self.jid, status="done", progress=100.0, finished_at=time.time(),
-               phase="complete",
-               message=f"complete - {result['frames']} frames, "
-                       f"{result['faces_swapped']} faces swapped")
+               phase="complete", options=json.dumps(opts, default=str)[:60000],
+               message=result.get("summary", "complete"))
+
+    def _fail(self, e: Exception) -> None:
+        from app.render.types import RenderError
+
+        if self.cancelled or str(e) == "cancelled":
+            update(self.jid, status="cancelled", finished_at=time.time())
+            return
+        if isinstance(e, RenderError):
+            # A RenderError is an explained technical fault -- show it verbatim.
+            update(self.jid, status="error", error=str(e)[:4000],
+                   finished_at=time.time())
+            return
+        update(self.jid, status="error", finished_at=time.time(),
+               error=f"{type(e).__name__}: {e}\n{traceback.format_exc()[-1500:]}"[:4000])
+
+    # ------------------------------------------------------------- engines
+    def _run_v2(self) -> dict[str, Any]:
+        from app.render import benchmark, pipeline
+        from app.render.types import PipelineConfig
+
+        quality = self.opts.get("quality", "quality")
+        opts = pipeline.RenderOptions(
+            quality=quality,
+            swap_all_faces=(self.opts.get("face_mode") == "many"),
+        )
+
+        identity = pipeline.load_source(self.sources)
+        bench_report = None
+
+        if quality == "auto":
+            cfg, bench_report = benchmark.run(
+                self.target, identity, opts, self.jid, self._on_progress)
+            opts.config = cfg
+        elif quality == "fast":
+            # Preview mode: one proven model, no parsing/occlusion/colour work.
+            opts.config = PipelineConfig(swapper="hyperswap_1a_256", enhancer=None,
+                                         mask="model", color_match=False)
+            opts.use_parsing = False
+            opts.use_occlusion = False
+        else:
+            opts.config = PipelineConfig(swapper="hyperswap_1a_256",
+                                         enhancer="gpen_bfr_512", enhancer_blend=0.7,
+                                         mask="model")
+
+        res = pipeline.render(self.sources, self.target, self.output, opts,
+                              self._on_progress, lambda: self.cancelled, identity)
+        d = res.as_dict()
+        if bench_report:
+            d["benchmark_winner"] = bench_report["winner"]["label"]
+            d["benchmark_score"] = bench_report["winner"]["score"]
+            d["benchmark_candidates"] = len(bench_report["candidates"])
+        d["engine"] = "v2"
+        d["summary"] = (f"complete - {res.frames} frames, {res.faces_swapped} faces, "
+                        f"{res.config.describe() if res.config else ''}")
+        return d
+
+    def _run_v1(self) -> dict[str, Any]:
+        """The V1 engine, kept as a regression baseline and fallback."""
+        from app import swapper
+
+        res = swapper.run_swap(
+            source_image=self.source, target_video=self.target,
+            output_path=self.output, on_progress=self._on_progress,
+            swap_all_faces=(self.opts.get("face_mode") == "many"),
+            quality="balanced", should_cancel=lambda: self.cancelled)
+        res["engine"] = "v1"
+        res["summary"] = (f"complete - {res['frames']} frames, "
+                          f"{res['faces_swapped']} faces swapped (v1)")
+        return res
 
 
-def start(jid: str, source: str, target: str, output: str, opts: dict[str, Any]) -> None:
-    r = JobRunner(jid, source, target, output, opts)
+def start(jid: str, sources: list[str], target: str, output: str,
+          opts: dict[str, Any]) -> None:
+    r = JobRunner(jid, sources, target, output, opts)
     with _lock:
         _runners[jid] = r
     r.start()

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import subprocess
 import time
+import dataclasses
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -75,7 +76,9 @@ class RenderResult:
         d = {k: getattr(self, k) for k in
              ("frames", "faces_swapped", "tracking", "video", "gpu",
               "timings", "fallbacks", "mask_sources", "encoder", "scene_cuts")}
-        d["config"] = self.config.__dict__ if self.config else None
+        # PipelineConfig uses slots, so no __dict__ -- asdict() is the
+        # supported way to serialise a dataclass either way.
+        d["config"] = dataclasses.asdict(self.config) if self.config else None
         d["benchmark"] = self.benchmark
         return d
 

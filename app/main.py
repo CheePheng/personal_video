@@ -233,7 +233,31 @@ def upload_complete(req: CompleteReq) -> dict:
             with open(p, "rb") as f:
                 shutil.copyfileobj(f, out, 1024 * 1024)
     shutil.rmtree(d, ignore_errors=True)
-    return {"path": str(final), "size": final.stat().st_size}
+    # Return an opaque media id, never a filesystem path: the browser must not
+    # be able to name a file on this machine. resolve_media() maps the id back
+    # to a path inside UPLOADS and nowhere else.
+    return {"media_id": final.name, "size": final.stat().st_size}
+
+
+def resolve_media(media_id: str) -> Path:
+    """Map a client-supplied media id to a real file inside UPLOADS.
+
+    Every path the browser can influence goes through here. We sanitise to a
+    bare filename, resolve it, and then verify the result is genuinely inside
+    UPLOADS -- which defeats traversal (``../``), absolute paths, symlinks and
+    UNC paths alike, because it checks the destination rather than the input.
+    """
+    name = os.path.basename(str(media_id or ""))
+    if not name or name in (".", ".."):
+        raise HTTPException(400, "invalid media id")
+    candidate = (UPLOADS / name).resolve()
+    try:
+        candidate.relative_to(UPLOADS.resolve())
+    except ValueError:
+        raise HTTPException(400, "invalid media id") from None
+    if not candidate.is_file():
+        raise HTTPException(404, f"no such upload: {name}")
+    return candidate
 
 
 # ---------------------------------------------------------------- jobs
@@ -241,31 +265,39 @@ def upload_complete(req: CompleteReq) -> dict:
 # The presets themselves live in app/swapper.py (QUALITY_PRESETS), next to the
 # code that acts on them -- one source of truth, so a preset cannot be accepted
 # here and then silently ignored by the pipeline.
-QUALITY = ("fast", "balanced", "best")
+QUALITY = ("fast", "quality", "auto")
 
 
 class JobReq(BaseModel):
-    source_path: str
-    target_path: str
-    quality: str = "balanced"
+    # Media ids issued by /api/upload/complete -- never filesystem paths.
+    source_ids: list[str] = []
+    target_id: str = ""
+    quality: str = "quality"
     face_mode: str = "reference"
+    engine: str = "v2"          # v2 | v1 (v1 kept as the regression fallback)
 
 
 @app.post("/api/jobs")
 def create_job(req: JobReq) -> dict:
-    for p in (req.source_path, req.target_path):
-        if not os.path.exists(p):
-            raise HTTPException(400, f"missing file: {p}")
+    if not req.source_ids:
+        raise HTTPException(400, "no source photo supplied")
+    if not req.target_id:
+        raise HTTPException(400, "no target video supplied")
+
+    sources = [str(resolve_media(m)) for m in req.source_ids[:5]]
+    target = str(resolve_media(req.target_id))
 
     jid_name = os.urandom(6).hex()
     output = str(OUTPUTS / f"{jid_name}.mp4")
     opts = {
-        "quality": req.quality if req.quality in QUALITY else "balanced",
+        "quality": req.quality if req.quality in QUALITY else "quality",
         "face_mode": req.face_mode,
+        "engine": "v1" if req.engine == "v1" else "v2",
+        "n_sources": len(sources),
     }
 
-    jid = jobs.create_job(req.source_path, req.target_path, output, json.dumps(opts))
-    jobs.start(jid, req.source_path, req.target_path, output, opts)
+    jid = jobs.create_job(sources[0], target, output, json.dumps(opts))
+    jobs.start(jid, sources, target, output, opts)
     return {"job_id": jid}
 
 @app.get("/api/jobs/{jid}")
@@ -385,8 +417,45 @@ def library_list() -> list[dict]:
             "quality": opts.get("quality"),
             "face_mode": opts.get("face_mode"),
             "duration": _ffprobe_duration(p),
+            # Exactly which pipeline produced this file. Recorded at render
+            # time so an old output can still be explained months later.
+            **_pipeline_summary(opts),
         })
     return items
+
+
+def _pipeline_summary(opts: dict) -> dict:
+    """Flatten the stored render record into library-friendly fields."""
+    res = opts.get("result") or {}
+    cfg = res.get("config") or {}
+    return {
+        "engine": res.get("engine", opts.get("engine", "v1")),
+        "swapper": cfg.get("swapper"),
+        "enhancer": cfg.get("enhancer"),
+        "enhancer_blend": cfg.get("enhancer_blend"),
+        "mask_sources": res.get("mask_sources"),
+        "encoder": res.get("encoder"),
+        "frames": res.get("frames"),
+        "identity_switches": (res.get("tracking") or {}).get("identity_switches"),
+        "benchmark_winner": res.get("benchmark_winner"),
+        "benchmark_score": res.get("benchmark_score"),
+        "benchmark_candidates": res.get("benchmark_candidates"),
+        "render_seconds": (res.get("timings") or {}).get("total_s"),
+    }
+
+
+@app.get("/api/library/{jid}/benchmark")
+def library_benchmark(jid: str) -> Response:
+    """The full benchmark report for an AUTO render, if one exists."""
+    safe = _SAFE.sub("", jid)
+    path = (DATA / "benchmarks" / f"{safe}.json").resolve()
+    try:
+        path.relative_to((DATA / "benchmarks").resolve())
+    except ValueError:
+        raise HTTPException(400, "invalid job id") from None
+    if not path.is_file():
+        raise HTTPException(404, "no benchmark for this render")
+    return FileResponse(path, media_type="application/json")
 
 
 @app.get("/api/library/{jid}/thumb")
