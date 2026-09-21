@@ -419,14 +419,20 @@ def run(target_path: str, identity: SourceIdentity, opts: RenderOptions,
             results.append({"config": asdict(cfg), "label": label,
                             "error": str(e)[:300], "score": -1.0})
         finally:
-            # Evict this candidate's swapper once it has been scored. Nine
-            # swappers plus four enhancers held resident is several GB of
-            # VRAM that nothing needs simultaneously, and on a 4K frame that
-            # headroom is the difference between finishing and an OOM.
-            if cfg.swapper != configs[0].swapper:
+            # Evict the swapper we just finished with, but ONLY when the next
+            # candidate needs a different one -- and never the shared
+            # detector / recogniser / parser / enhancer sessions.
+            #
+            # An earlier version also released everything whenever free VRAM
+            # looked low. That deadlocked into a thrash: releasing a Python
+            # session does not hand VRAM straight back (ORT's CUDA allocator
+            # keeps its arena), so "free" stayed low, so it released again
+            # after every candidate and rebuilt ~1.5 GB of models each time.
+            # One clip went from minutes to over an hour. Free VRAM is not a
+            # usable trigger here; the next-candidate check is.
+            nxt = configs[i + 1].swapper if i + 1 < len(configs) else None
+            if cfg.swapper != nxt:
                 sessions.release(cfg.swapper)
-            if free_mb() is not None and free_mb() < 2500:
-                sessions.release()
 
     ok = [r for r in results if r.get("score", -1) >= 0]
     if not ok:
