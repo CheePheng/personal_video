@@ -161,18 +161,76 @@ def flow_warped_difference(prev: np.ndarray, cur: np.ndarray,
     return float(np.abs(warped.astype(np.float32) - cur.astype(np.float32)).mean())
 
 
-def scene_cut(prev: np.ndarray, cur: np.ndarray, threshold: float = 0.42) -> bool:
-    """Detect a hard cut via colour-histogram correlation.
+def _hist(img: np.ndarray) -> np.ndarray:
+    small = cv2.resize(img, (160, 90), interpolation=cv2.INTER_AREA)
+    h = cv2.calcHist([cv2.cvtColor(small, cv2.COLOR_BGR2HSV)],
+                     [0, 1], None, [32, 32], [0, 180, 0, 256])
+    return cv2.normalize(h, h).flatten()
 
-    Smoothing anything across a cut is wrong -- the face, mask and colour state
-    all belong to a different shot.
+
+def _mad(prev: np.ndarray, cur: np.ndarray) -> float:
+    """Mean absolute difference on a small greyscale copy."""
+    a = cv2.cvtColor(cv2.resize(prev, (160, 90), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    b = cv2.cvtColor(cv2.resize(cur, (160, 90), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2GRAY)
+    return float(np.abs(a.astype(np.int16) - b.astype(np.int16)).mean())
+
+
+def scene_cut(prev: np.ndarray, cur: np.ndarray, threshold: float = 0.42) -> bool:
+    """Stateless cut test on colour distribution alone.
+
+    Kept for callers that have no history. Prefer SceneCutDetector: a histogram
+    cannot see a cut between two shots that share a palette, which is common
+    (same room, same lighting, different framing).
     """
-    def hist(img: np.ndarray) -> np.ndarray:
-        small = cv2.resize(img, (160, 90), interpolation=cv2.INTER_AREA)
-        h = cv2.calcHist([cv2.cvtColor(small, cv2.COLOR_BGR2HSV)],
-                         [0, 1], None, [32, 32], [0, 180, 0, 256])
-        return cv2.normalize(h, h).flatten()
-    return float(cv2.compareHist(hist(prev), hist(cur), cv2.HISTCMP_CORREL)) < threshold
+    return float(cv2.compareHist(_hist(prev), _hist(cur), cv2.HISTCMP_CORREL)) < threshold
+
+
+class SceneCutDetector:
+    """Detect hard cuts from BOTH colour distribution and frame content.
+
+    Histogram correlation alone is not enough: two shots filmed in the same
+    room have near-identical colour distributions, so a real cut between them
+    barely moves the correlation even though every pixel changed. Conversely,
+    raw pixel difference alone fires on fast camera motion.
+
+    So we use each for what it is good at:
+      * a large drop in histogram correlation  -> clearly a different scene
+      * a spike in pixel difference *relative to this clip's recent motion*
+        -> the content changed abruptly, whatever the palette
+
+    The second test is adaptive, which is what makes it safe on handheld
+    footage: a clip that is always moving has a high baseline, so only a jump
+    well above that baseline counts.
+    """
+
+    def __init__(self, hist_threshold: float = 0.55, mad_floor: float = 8.0,
+                 mad_ratio: float = 3.0, window: int = 24):
+        self.hist_threshold = hist_threshold
+        self.mad_floor = mad_floor
+        self.mad_ratio = mad_ratio
+        self.window = window
+        self._recent: list[float] = []
+        self.cuts = 0
+
+    def reset(self) -> None:
+        self._recent.clear()
+
+    def __call__(self, prev: np.ndarray, cur: np.ndarray) -> bool:
+        corr = float(cv2.compareHist(_hist(prev), _hist(cur), cv2.HISTCMP_CORREL))
+        mad = _mad(prev, cur)
+
+        baseline = float(np.median(self._recent)) if self._recent else 0.0
+        spike = mad >= self.mad_floor and mad >= self.mad_ratio * max(baseline, 1.0)
+        cut = corr < self.hist_threshold or spike
+
+        self._recent.append(mad)
+        if len(self._recent) > self.window:
+            self._recent.pop(0)
+        if cut:
+            self.cuts += 1
+            # A cut makes the pre-cut motion history meaningless.
+            self._recent = [mad]
+        return cut
 
 
 # ---------------------------------------------------------------- selection

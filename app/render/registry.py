@@ -37,13 +37,13 @@ DETECTORS: dict[str, ModelSpec] = {
         notes="Fast, good recall on frontal faces. Default detector."),
     "scrfd_2.5g": ModelSpec(
         name="scrfd_2.5g", filename="scrfd_2.5g.onnx", role="detector",
-        input_size=640, template="arcface_112_v2", normalization=Normalization.ZERO_ONE,
+        input_size=640, template="arcface_112_v2", normalization=Normalization.CENTRED_128,
         license="InsightFace: MIT code / non-commercial research weights",
         source_url=_u("models-3.0.0", "scrfd_2.5g.onnx"),
         notes="Stronger on small/profile faces; different output decode to YOLO."),
     "retinaface_10g": ModelSpec(
         name="retinaface_10g", filename="retinaface_10g.onnx", role="detector",
-        input_size=640, template="arcface_112_v2", normalization=Normalization.ZERO_ONE,
+        input_size=640, template="arcface_112_v2", normalization=Normalization.CENTRED_128,
         license="InsightFace: MIT code / non-commercial research weights",
         source_url=_u("models-3.0.0", "retinaface_10g.onnx"),
         notes="Heavier; strongest recall. Reserved as difficult-frame fallback."),
@@ -123,7 +123,7 @@ ENHANCERS: dict[str, ModelSpec] = {
 PARSERS: dict[str, ModelSpec] = {
     "bisenet_resnet_34": ModelSpec(
         name="bisenet_resnet_34", filename="bisenet_resnet_34.onnx", role="parser",
-        input_size=512, template="ffhq_512", normalization=Normalization.NEG_ONE_ONE,
+        input_size=512, template="ffhq_512", normalization=Normalization.IMAGENET,
         license="MIT code / weights trained on CelebAMask-HQ (non-commercial dataset terms apply to derived data)",
         source_url=_u("models-3.0.0", "bisenet_resnet_34.onnx"),
         notes="19-class CelebAMask-HQ parsing. Needs IMAGENET normalization."),

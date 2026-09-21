@@ -209,10 +209,21 @@ def render(source_paths: list[str], target_path: str, output_path: str,
     lock = None if opts.swap_all_faces else TargetLock(diag, opts.identity_floor)
     tracker = FaceTracker(diag, opts.identity_floor) if opts.swap_all_faces else None
 
+    cut_detector = metrics.SceneCutDetector()
     dec = video.decode(target_path, info)
     tmp = str(Path(output_path).with_suffix(".silent.mp4"))
     enc, enc_name = video.open_encoder(tmp, info, "fast" if opts.quality == "fast" else "quality")
     res.encoder = enc_name
+    if info.is_vfr:
+        # Declared, not silent: the brief requires any quality-affecting
+        # fallback to be recorded on the job rather than hidden.
+        res.fallbacks.append(
+            f"source is variable-frame-rate; encoded at the average {info.fps:.3f} fps "
+            "(constant). Total duration and A/V sync are preserved; per-frame "
+            "intervals are not.")
+    if info.rotation:
+        res.fallbacks.append(f"source carries {info.rotation}deg rotation metadata; "
+                             "applied during decode.")
 
     total = opts.max_frames or info.total_frames
     done = 0
@@ -229,7 +240,7 @@ def render(source_paths: list[str], target_path: str, output_path: str,
                 break
 
             work = frame
-            if prev_frame is not None and metrics.scene_cut(prev_frame, frame):
+            if prev_frame is not None and cut_detector(prev_frame, frame):
                 res.scene_cuts += 1
                 renderer.reset_temporal()
                 if lock:

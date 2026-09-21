@@ -47,10 +47,18 @@ IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32).reshape(3, 1, 1)
 IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32).reshape(3, 1, 1)
 
 
-def _prep_parser(crop: np.ndarray) -> np.ndarray:
-    """NCHW, ImageNet-normalised -- BiSeNet's convention."""
+def _prep_parser(crop: np.ndarray, spec) -> np.ndarray:
+    """NCHW, normalised as the model's spec declares.
+
+    Read from the ModelSpec rather than hard-coded, so the registry stays the
+    single source of truth and cannot silently disagree with this code.
+    """
     blob = crop[:, :, ::-1].transpose(2, 0, 1).astype(np.float32) / 255.0
-    return ((blob - IMAGENET_MEAN) / IMAGENET_STD)[None]
+    if spec.normalization is Normalization.IMAGENET:
+        return ((blob - IMAGENET_MEAN) / IMAGENET_STD)[None]
+    if spec.normalization is Normalization.NEG_ONE_ONE:
+        return ((blob - 0.5) / 0.5)[None]
+    return blob[None]
 
 
 def _prep_xseg(crop: np.ndarray) -> np.ndarray:
@@ -87,7 +95,7 @@ def parsing_masks(frame: np.ndarray, kps: np.ndarray,
     """
     spec = get_model(model)
     crop, _ = alignment.warp(frame, kps, spec.template, spec.input_size)
-    out = sessions.run(spec, {"input": _prep_parser(crop)})[0]
+    out = sessions.run(spec, {"input": _prep_parser(crop, spec)})[0]
 
     labels = np.argmax(out[0], axis=0).astype(np.int32)
     face = np.isin(labels, FACE_CLASSES).astype(np.float32)

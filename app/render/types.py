@@ -63,6 +63,8 @@ class Normalization(str, Enum):
     ZERO_ONE = "0_1"            # x / 255
     NEG_ONE_ONE = "-1_1"        # (x/255 - 0.5) / 0.5
     ARCFACE = "arcface"         # (x - 127.5) / 127.5
+    IMAGENET = "imagenet"       # (x/255 - imagenet_mean) / imagenet_std
+    CENTRED_128 = "centred_128" # (x - 127.5) / 128   (InsightFace detectors)
 
 
 @dataclass(frozen=True, slots=True)

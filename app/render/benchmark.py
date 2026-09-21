@@ -33,6 +33,11 @@ from app.render.types import (Face, PipelineConfig, RenderError, SourceIdentity)
 
 BENCH_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "benchmarks"
 
+# Cosine below which two consecutive rendered faces are treated as different
+# people. Sampled frames are far apart in time, so genuine pose/lighting drift
+# is expected; only a real identity change falls this far.
+IDENTITY_JUMP = 0.45
+
 
 # ---------------------------------------------------------------- sampling
 def _frame_traits(frame: np.ndarray, faces: list[Face]) -> dict[str, Any]:
@@ -150,6 +155,7 @@ def score_config(cfg: PipelineConfig, samples: list[tuple[int, np.ndarray, dict]
     renderer = FrameRenderer(cfg, opts, identity, diag)
 
     per_frame: list[dict[str, Any]] = []
+    switches = 0
     prev_out: Optional[np.ndarray] = None
     prev_emb: Optional[np.ndarray] = None
     t0 = time.time()
@@ -183,6 +189,10 @@ def score_config(cfg: PipelineConfig, samples: list[tuple[int, np.ndarray, dict]
                 ident_stab = metrics.identity_stability(prev_emb, emb)
             except RenderError:
                 pass
+
+        if (prev_emb is not None and emb is not None
+                and recognition.similarity(prev_emb, emb) < IDENTITY_JUMP):
+            switches += 1
 
         row = {
             "frame": idx,
@@ -224,7 +234,7 @@ def score_config(cfg: PipelineConfig, samples: list[tuple[int, np.ndarray, dict]
         "mask_jitter_mean": metrics.summarise(col("mask_jitter"))["mean"],
         "flow_flicker_mean": metrics.summarise(col("flow_flicker"))["mean"],
         "ms_per_frame": metrics.summarise(col("ms"))["mean"],
-        "identity_switches": 0,
+        "identity_switches": switches,
         "frames_measured": len([r for r in per_frame if "error" not in r]),
         "frames_failed": len([r for r in per_frame if "error" in r]),
         "vram_peak_mb": vram_peak,

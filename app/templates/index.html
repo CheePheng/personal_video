@@ -66,6 +66,11 @@
   a.dl{display:block;text-align:center;background:var(--ok);color:#fff;text-decoration:none;
        padding:12px;border-radius:9px;font-weight:600;margin-top:10px}
   .foot{color:var(--muted);font-size:11.5px;text-align:center;margin-top:18px}
+  .notice{color:var(--muted);font-size:12px;text-align:center;margin-top:20px;
+          padding:9px 12px;border:1px solid var(--line);border-radius:9px;background:var(--panel)}
+  .statline{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
+  .statline span{font-size:11px;padding:3px 8px;border-radius:99px;border:1px solid var(--line);
+          color:var(--muted);font-variant-numeric:tabular-nums}
 
   /* ---------- library ---------- */
   .lib-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px}
@@ -129,10 +134,10 @@
     <div>
       <label class="fld">2 &middot; Face to use</label>
       <div class="drop" id="dropF">
-        <div class="big">Choose photo</div>
-        <div class="hint">clear, front-facing</div>
+        <div class="big">Choose photo(s)</div>
+        <div class="hint">1&ndash;5 photos, clear and front-facing</div>
       </div>
-      <input type="file" id="fileF" accept="image/*" class="hide">
+      <input type="file" id="fileF" accept="image/*" multiple class="hide">
       <div class="picked hide" id="pickF"><img alt=""><span class="nm"></span></div>
     </div>
   </div>
@@ -143,9 +148,9 @@
     <div>
       <label class="fld" for="quality">Quality</label>
       <select id="quality">
-        <option value="balanced" selected>Balanced &mdash; sharpened, recommended</option>
-        <option value="fast">Fast &mdash; no sharpening, ~2&times; quicker</option>
-        <option value="best">Best &mdash; sharpened + finds harder faces</option>
+        <option value="quality" selected>Quality &mdash; recommended</option>
+        <option value="fast">Fast &mdash; preview, no restoration</option>
+        <option value="auto">Auto Max &mdash; benchmarks models, picks the best</option>
       </select>
     </div>
     <div>
@@ -170,6 +175,7 @@
   <div class="row"><span class="mono" style="background:none;border:0;padding:0" id="pct">0%</span>
     <span class="mono" style="background:none;border:0;padding:0" id="eta"></span></div>
   <div class="mono hide" id="log"></div>
+  <div class="statline hide" id="statline"></div>
   <div style="margin-top:12px"><button class="ghost" id="cancel">Cancel</button></div>
 </div>
 
@@ -205,6 +211,7 @@
   </div>
 </div>
 
+<div class="notice">Use footage and photos you have the rights to, including the consent of anyone who appears in them.</div>
 <div class="foot">Local render &middot; no API keys &middot; no usage limits</div>
 
 <script src="/static/app.js"></script>

@@ -22,9 +22,10 @@ const el = {
   pick: $("pick"), quality: $("quality"), whichface: $("whichface"),
   libGrid: $("libGrid"), libEmpty: $("libEmpty"), libCount: $("libCount"),
   modal: $("modal"), modalVid: $("modalVid"), modalClose: $("modalClose"),
+  statline: $("statline"),
 };
 
-let videoFile = null, faceFile = null, jobId = null, polling = null, cancelled = false;
+let videoFile = null, faceFiles = [], jobId = null, polling = null, cancelled = false;
 
 /* ---------- file pickers ---------- */
 function wireDrop(drop, input, onPick) {
@@ -33,9 +34,9 @@ function wireDrop(drop, input, onPick) {
   drop.ondragleave = () => drop.classList.remove("over");
   drop.ondrop = (e) => {
     e.preventDefault(); drop.classList.remove("over");
-    if (e.dataTransfer.files[0]) { input.files = e.dataTransfer.files; onPick(e.dataTransfer.files[0]); }
+    if (e.dataTransfer.files[0]) { input.files = e.dataTransfer.files; onPick(e.dataTransfer.files[0], e.dataTransfer.files); }
   };
-  input.onchange = () => input.files[0] && onPick(input.files[0]);
+  input.onchange = () => input.files[0] && onPick(input.files[0], input.files);
 }
 const fmt = (b) => b > 1e9 ? (b/1e9).toFixed(1)+" GB" : b > 1e6 ? (b/1e6).toFixed(0)+" MB" : (b/1e3).toFixed(0)+" KB";
 
@@ -45,15 +46,19 @@ wireDrop(el.dropV, el.fileV, (f) => {
   el.pickV.querySelector(".nm").textContent = `${f.name} (${fmt(f.size)})`;
   refresh();
 });
-wireDrop(el.dropF, el.fileF, (f) => {
-  faceFile = f;
+wireDrop(el.dropF, el.fileF, (f, all) => {
+  // Accept several photos of the same person; the renderer fuses them into
+  // one identity, weighted by how usable each face is.
+  faceFiles = (all && all.length ? Array.from(all) : [f]).slice(0, 5);
   el.pickF.classList.remove("hide");
-  el.pickF.querySelector(".nm").textContent = `${f.name} (${fmt(f.size)})`;
+  const names = faceFiles.map((x) => x.name).join(", ");
+  el.pickF.querySelector(".nm").textContent =
+    faceFiles.length > 1 ? `${faceFiles.length} photos - ${names}` : `${names} (${fmt(f.size)})`;
   const img = el.pickF.querySelector("img");
-  img.src = URL.createObjectURL(f);
+  img.src = URL.createObjectURL(faceFiles[0]);
   refresh();
 });
-function refresh() { el.go.disabled = !(videoFile && faceFile); }
+function refresh() { el.go.disabled = !(videoFile && faceFiles.length); }
 
 /* ---------- chunked upload ---------- */
 async function postJSON(url, body) {
@@ -85,8 +90,9 @@ async function uploadFile(file, onPct) {
     if (!ok) throw lastErr || new Error(`chunk ${i} failed`);
     onPct(((i + 1) / total) * 100);
   }
-  const { path } = await postJSON("/api/upload/complete", { upload_id, chunks: total });
-  return path;
+  // The server returns an opaque media id, never a filesystem path.
+  const { media_id } = await postJSON("/api/upload/complete", { upload_id, chunks: total });
+  return media_id;
 }
 
 /* ---------- progress UI ---------- */
@@ -109,14 +115,16 @@ el.go.onclick = async () => {
   toPanel("prog");
   showStage("Uploading video", 0, "uploading");
   try {
-    const targetPath = await uploadFile(videoFile, (p) => showStage("Uploading video", p * 0.9, "uploading"));
-    showStage("Uploading photo", 92, "uploading");
-    const sourcePath = await uploadFile(faceFile, () => {});
+    const targetId = await uploadFile(videoFile, (p) => showStage("Uploading video", p * 0.9, "uploading"));
+    showStage("Uploading photos", 92, "uploading");
+    // 1..5 photos of the same person: more angles give a steadier identity.
+    const sourceIds = [];
+    for (const f of faceFiles) sourceIds.push(await uploadFile(f, () => {}));
     showStage("Starting render", 97, "starting");
 
     const res = await postJSON("/api/jobs", {
-      source_path: sourcePath,
-      target_path: targetPath,
+      source_ids: sourceIds,
+      target_id: targetId,
       quality: el.quality.value,
       face_mode: el.whichface.value,
     });
@@ -149,6 +157,7 @@ async function poll() {
   if (j.status === "running" || j.status === "queued") {
     const label = j.phase ? j.phase[0].toUpperCase() + j.phase.slice(1) : "Rendering";
     showStage(label, j.progress || 0, "rendering");
+    showStats(j);
     if (j.started_at && j.progress > 3) {
       const elapsed = Date.now() / 1000 - j.started_at;
       const left = elapsed * (100 - j.progress) / j.progress;
@@ -167,6 +176,28 @@ async function poll() {
     localStorage.removeItem(LS_KEY);
     fail(j.error || `job ${j.status}`);
   }
+}
+
+/* Live stat chips. The server already formats frame/fps/ETA into `message`;
+ * these add the pipeline facts that do not change per frame. */
+function showStats(j) {
+  const bits = [];
+  if (j.phase) bits.push(j.phase);
+  const m = String(j.message || "");
+  const frames = m.match(/frame (\d+) of (\d+)/);
+  if (frames) bits.push(`${frames[1]} / ${frames[2]} frames`);
+  const fps = m.match(/([\d.]+) fps/);
+  if (fps) bits.push(`${fps[1]} fps`);
+  const cand = m.match(/^(\S+ \+ \S+|\S+ bare)/);
+  if (cand && /benchmark|restor/i.test(j.phase || "")) bits.push(cand[1]);
+  if (!bits.length) { el.statline.classList.add("hide"); return; }
+  el.statline.replaceChildren();
+  for (const b of bits) {
+    const s = document.createElement("span");
+    s.textContent = b;
+    el.statline.append(s);
+  }
+  el.statline.classList.remove("hide");
 }
 
 function fail(msg) {
@@ -197,7 +228,7 @@ el.again.onclick = el.retry.onclick = () => { jobId = null; toPanel("pick"); };
  * Every completed render is listed here so a finished video is never lost
  * behind a closed tab. Refreshed on load and whenever a job finishes.
  */
-const QUALITY_LABEL = { fast: "Fast", balanced: "Balanced", best: "Best" };
+const QUALITY_LABEL = { fast: "Fast", quality: "Quality", auto: "Auto Max", balanced: "Balanced", best: "Best" };
 const FACE_LABEL = { reference: "One face", many: "All faces" };
 
 function relTime(ts) {
@@ -236,6 +267,11 @@ async function loadLibrary() {
       QUALITY_LABEL[it.quality] || it.quality,
       FACE_LABEL[it.face_mode] || it.face_mode,
       fmt(it.size),
+      it.engine ? it.engine.toUpperCase() : null,
+      it.swapper || null,
+      it.enhancer ? `${it.enhancer} ${Math.round((it.enhancer_blend || 0) * 100)}%` : "no restore",
+      it.benchmark_winner ? `auto-picked from ${it.benchmark_candidates}` : null,
+      (it.identity_switches === 0) ? "0 id switches" : null,
     ].filter(Boolean);
 
     // textContent everywhere below (no innerHTML with data) so a filename can

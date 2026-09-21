@@ -8,9 +8,13 @@ Three things that quietly break video tools, handled explicitly here:
   * **Rotation metadata.** Phone footage is often stored landscape with a 90-deg
     display matrix. Decoding raw ignores that, so a portrait video would render
     sideways. We read the side-data and let ffmpeg apply it on decode.
-  * **Variable frame rate.** Re-encoding VFR at a fixed rate silently drifts
-    audio out of sync over minutes. We detect VFR and hand ffmpeg the original
-    timing instead of pretending it is CFR.
+  * **Variable frame rate.** Decoding to a raw pipe discards per-frame
+    timestamps, so the output is necessarily constant-rate. We detect VFR and
+    encode at the measured AVERAGE rate, which keeps total duration and
+    therefore A/V sync correct end to end -- the same conversion an NLE does on
+    import. Individual inter-frame intervals are not preserved, so the
+    conversion is recorded as a declared fallback on the job rather than done
+    silently.
   * **Audio.** Copied rather than re-encoded when it is already browser-safe,
     which is both lossless and faster.
 """
@@ -148,9 +152,15 @@ def probe(path: str) -> VideoInfo:
 
 def decode(path: str, info: VideoInfo) -> subprocess.Popen:
     """Open a raw BGR24 frame pipe. ffmpeg applies rotation for us."""
-    cmd = [FFMPEG, "-v", "error", "-nostdin"]
-    # autorotate is ffmpeg's default, but state it so intent survives edits.
-    cmd += ["-i", str(path), "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+    # -autorotate is ffmpeg's default, but passed explicitly so a future
+    # ffmpeg default change cannot silently start rendering phone video
+    # sideways. It must precede -i to apply to that input.
+    # -autorotate is a BOOLEAN flag (no value) and must precede -i to bind to
+    # that input. Passing "1" makes ffmpeg read it as an output URL and abort.
+    # It is already the default; stated explicitly so a future default change
+    # cannot silently start rendering phone video sideways.
+    cmd = [FFMPEG, "-v", "error", "-nostdin", "-autorotate",
+           "-i", str(path), "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
     try:
         return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
@@ -205,6 +215,10 @@ def open_encoder(out_path: str, info: VideoInfo, quality: str = "quality"
         FFMPEG, "-v", "error", "-nostdin", "-y",
         "-f", "rawvideo", "-pix_fmt", "bgr24",
         "-s", f"{info.width}x{info.height}", "-r", f"{info.fps}", "-i", "-",
+        # Constant rate at the measured average: the raw pipe carries no
+        # timestamps, so this is what keeps total duration (and thus A/V sync)
+        # correct for VFR sources.
+        "-vsync", "cfr",
         *args,
         # yuv420p: the only chroma format every browser decodes reliably.
         "-pix_fmt", "yuv420p", str(out_path),
