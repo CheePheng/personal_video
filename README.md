@@ -91,40 +91,72 @@ Nothing in `data/` or `models/` is committed to git.
 
 ## How a render works
 
-Everything runs in-process; there is no external CLI and no subprocess to parse.
+Everything runs in-process; there is no external CLI and no subprocess output to
+parse. The pipeline lives in `app/render/` -- see [docs/V2_ARCHITECTURE.md](docs/V2_ARCHITECTURE.md).
 
-    upload face + video
-      -> ffprobe the target (fps, frame count, audio, codec)
+    upload 1-5 face photos + a target video
+      -> ffprobe the target (fps, frame count, rotation, VFR, audio, codec)
+      -> fuse the photos into one identity, weighted by face quality
       -> decode frames with ffmpeg (raw BGR over a pipe)
-      -> detect faces          yoloface_8n.onnx
-      -> lock onto one identity (or all faces in "Everyone" mode)
-      -> swap                  hyperswap_1a_256.onnx
-      -> sharpen (optional)    gfpgan_1.4.onnx
-      -> encode with ffmpeg (NVENC if available, else x264)
-      -> mux the original audio back in, +faststart for browser seeking
+      -> detect faces            yoloface_8n
+      -> embed each face         arcface_w600k_r50
+      -> track: which face is OUR person, by identity + motion + overlap
+      -> swap                    hyperswap_1a/1b/1c
+      -> mask: model + BiSeNet parsing + XSeg occlusion, temporally smoothed
+      -> colour-match to the target's lighting, inside the mask only
+      -> restore detail (optional, blend chosen by benchmark)
+      -> encode with NVENC p7-hq, mux the original audio, +faststart
       -> Video Library
 
 Progress is `frames_done / total_frames` -- a real count, not an estimate.
+
+### Quality modes
+
+| Mode | What it does |
+|---|---|
+| **Fast** | One model, no parsing/occlusion masks, no restoration. For previews. |
+| **Quality** | Full masks, colour match, temporal smoothing, GPEN restoration. Default. |
+| **Auto Max** | Samples the hard frames of *your* video, benchmarks every model and restoration blend on them, and picks the winner by measurement. |
+
+Auto Max writes its full report to `data/benchmarks/<job-id>.json`, and the
+library records exactly which pipeline won.
+
+### Tracking
+
+"One person" mode locks onto a face by identity, not by size. If another person
+moves closer to the camera, gets larger, or crosses in front, the swap stays on
+the locked person. If the locked person is not confidently present, **no frame
+is swapped** -- a missing swap is a smaller error than the wrong face.
 
 ### The models
 
 | File | Size | Job |
 |---|---|---|
-| `yoloface_8n.onnx` | 12 MB | find faces; returns a box + 5 landmarks each |
-| `arcface_w600k_r50.onnx` | 174 MB | turn a face into a 512-d identity vector |
-| `hyperswap_1a_256.onnx` | 403 MB | the swap: (identity, face) -> new face |
-| `gfpgan_1.4.onnx` | 340 MB | restore detail; the swapper outputs 256px |
+| `yoloface_8n.onnx` | 12 MB | find faces; box + 5 landmarks |
+| `arcface_w600k_r50.onnx` | 174 MB | 512-d identity vector |
+| `hyperswap_1a/1b/1c_256.onnx` | 403 MB each | the swap (all three benchmarked) |
+| `bisenet_resnet_34.onnx` | 94 MB | face parsing -- hair/glasses/hat masks |
+| `xseg_1.onnx` | 70 MB | occlusion -- hands and objects in front of the face |
+| `gfpgan_1.4` / `codeformer` / `gpen_bfr_512` / `restoreformer_plus_plus` | 284-377 MB | restoration candidates |
 
-### Quality presets
+Licensing for every one of these is recorded in [docs/MODELS.md](docs/MODELS.md).
+Short version: this stack is **research / personal use only**.
 
-| Preset | Detection threshold | Sharpening | Speed |
-|---|---|---|---|
-| Fast | 0.60 | off | ~2x quicker |
-| Balanced | 0.50 | GFPGAN | default |
-| Best | 0.35 | GFPGAN | catches profile/blurred faces |
+Models are gitignored and fetched on demand:
 
-Sharpening is the visible difference: measured face sharpness (Laplacian
-variance) goes from 148 to 354 with GFPGAN on.
+    python -m app.render.download
+
+Each download is SHA256-recorded in `models/hashes.json` and verified on every
+later load.
+
+### Testing
+
+    python scripts/make_testclips.py     # build the synthetic test matrix
+    python scripts/v2_testsuite.py       # 80 checks across 12 clips
+    python scripts/v1_vs_v2.py           # head-to-head against V1
+
+The tracking clips are composited from two known identities, so "zero identity
+switches" is a decidable claim rather than an impression.
 
 ## Housekeeping
 
