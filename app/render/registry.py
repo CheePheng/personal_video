@@ -19,15 +19,33 @@ from typing import Iterable
 
 from app.render.types import ModelSpec, Normalization, RenderError
 
-# PIXEL BOOST IS DISABLED, on measurement rather than opinion.
-# Benchmarked at 256/512/768/1024 on close-up, 1080p and 4K faces
-# (data/benchmarks/components/): identity fell at EVERY boost level
-# (0.978 -> 0.959 on a 212px face) while sharpness moved less than 2%
-# and render time rose. Tiling a 256px model across a larger crop gives
-# each tile only local context, so the model re-synthesises the face in
-# pieces -- more compute for a slightly worse likeness. The implementation
-# in swapping.swap() is correct and retained; the option is simply not
-# offered, because a setting that cannot improve the result is a trap.
+# PIXEL BOOST: 512 disabled, 768/1024 offered. This is a CORRECTION of an
+# earlier, wrong conclusion, and the reasoning matters more than the setting.
+#
+# The first measurement said boost was harmful at every level and the option
+# was withdrawn. That measurement scored identity with ArcFace -- the same
+# model the swap is conditioned on. Boost changes the crop's frequency
+# content, which is exactly where an in-loop recogniser is least trustworthy.
+#
+# Re-measured over 30 samples from 6 clips against SFace, an independently
+# trained judge held out of the optimisation loop (app/render/judges.py):
+#
+#     boost   ArcFace (in-loop)   SFace (judge)   sharpness
+#      256         0.9462            0.9034          863
+#      512         0.9239 (-.022)    0.8892 (-.014)  896
+#      768         0.9419 (-.004)    0.9151 (+.012)  891
+#     1024         0.9435 (-.003)    0.9122 (+.009)  888
+#
+# The judges AGREE that 512 is worst -- two tiles split the face down the
+# middle. They DISAGREE in sign at 768 and 1024: ArcFace says marginally
+# worse (within noise), the independent judge says better.
+#
+# So 512 stays off, 768/1024 become benchmarked options, and the blanket
+# claim "boost is harmful" is retracted. Note the honest limitation: Auto Max
+# still ranks with ArcFace, so it will rarely select boost on its own. Which
+# judge is right is not settled by these numbers -- that needs human
+# evaluation. What IS settled is that the original conclusion was drawn from
+# a closed loop and should not have been stated as flatly as it was.
 ASSETS = "https://github.com/facefusion/facefusion-assets/releases/download"
 REGISTRY_JSON = Path(__file__).resolve().parent.parent.parent / "models" / "registry.json"
 
@@ -79,7 +97,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1a_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(),   # disabled -- measured harmful, see below
+        pixel_boost=(768, 1024),   # 512 excluded; see the note above
         notes="V1's model. Strong identity, ships its own mask."),
     "hyperswap_1b_256": ModelSpec(
         name="hyperswap_1b_256", filename="hyperswap_1b_256.onnx", role="swapper",
@@ -87,7 +105,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1b_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(),   # disabled -- measured harmful, see below
+        pixel_boost=(768, 1024),   # 512 excluded; see the note above
         notes="Sibling of 1a; different identity/expression balance."),
     "hyperswap_1c_256": ModelSpec(
         name="hyperswap_1c_256", filename="hyperswap_1c_256.onnx", role="swapper",
@@ -95,7 +113,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1c_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(),   # disabled -- measured harmful, see below
+        pixel_boost=(768, 1024),   # 512 excluded; see the note above
         notes="Sibling of 1a; benchmarked, not assumed better."),
     "alphaface_256": ModelSpec(
         name="alphaface_256", filename="alphaface_256.onnx", role="swapper",

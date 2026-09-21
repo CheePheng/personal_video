@@ -233,8 +233,35 @@ numbers did not support them:
 
 | Feature | Measurement | Decision |
 |---|---|---|
-| **Pixel boost** (512/768/1024) | Identity fell at every level (0.978 -> 0.959 on a 212 px face); sharpness moved under 2%; render time rose | **Disabled.** Code retained, option withdrawn. |
+| **Pixel boost** | 512 measurably worst on both judges; 768/1024 disputed -- ArcFace says marginally worse, an independent judge says better | **512 off, 768/1024 offered.** See the correction below. |
 | **TensorRT** | Provider is listed by onnxruntime but `nvinfer_10.dll` is absent, so sessions silently fall back to CUDA | **Not evaluated.** Reported as such rather than as a bogus 1.00x tie. |
+
+#### A correction worth reading
+
+The first pixel-boost measurement concluded "harmful at every level" and the
+option was withdrawn. That measurement scored identity with **ArcFace -- the
+same model the swap is conditioned on**, and pixel boost changes exactly the
+frequency content where an in-loop recogniser is least trustworthy.
+
+Re-measured over 30 samples from 6 clips against **SFace**, an independently
+trained recogniser (Apache-2.0) held out of the optimisation loop:
+
+| boost | ArcFace (in-loop) | SFace (judge) | sharpness |
+|---|---|---|---|
+| 256 | 0.9462 | 0.9034 | 863 |
+| 512 | 0.9239 (−0.022) | 0.8892 (−0.014) | 896 |
+| **768** | 0.9419 (−0.004) | **0.9151 (+0.012)** | 891 |
+| 1024 | 0.9435 (−0.003) | **0.9122 (+0.009)** | 888 |
+
+The judges **agree** 512 is worst — two tiles split the face down the middle.
+They **disagree in sign** at 768 and 1024. So 512 stays off, 768/1024 are
+offered, and the blanket claim is retracted.
+
+Which judge is right is *not* settled by these numbers; that needs human
+evaluation. What is settled is that the original conclusion came from a closed
+loop and was stated more flatly than the evidence supported. The judge lives in
+`app/render/judges.py` and is deliberately **not** wired into Auto Max — a judge
+that participates in selection stops being a judge.
 
 Detector choice was also settled by measurement: YOLOFace reached 1.000 recall
 at 8.2 ms against 0.829 for both SCRFD and RetinaFace, so it stays primary,
