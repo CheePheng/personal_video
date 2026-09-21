@@ -13,6 +13,7 @@ first V2 comparison misleading.
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -36,6 +37,65 @@ CLIP_SET = ["A_single_frontal", "K_other_larger", "J_two_crossing",
 def _peak_vram() -> int:
     from app.render import sessions
     return int(sessions.gpu_info().get("vram_used_mb") or 0)
+
+
+# Each engine renders in its OWN PROCESS.
+#
+# ONNX Runtime's CUDA allocator keeps its arena for the life of the process
+# and does not hand it back when a session is released. V1 has its own session
+# cache with default (doubling) arena settings, so once V1 has rendered, every
+# later engine in that process runs memory-starved -- which turned a 57 second
+# Auto Max benchmark into tens of minutes. Clearing Python references does not
+# help; only process exit reliably returns the memory. So we pay ~5s of
+# interpreter startup per render and get clean, comparable timings.
+_RUNNER = r"""
+import json, sys, time
+sys.path.insert(0, %(root)r)
+
+engine, source, target, out, job = sys.argv[1:6]
+t0 = time.time()
+if engine == "v1":
+    from app import swapper
+    r = swapper.run_swap(source_image=source, target_video=target,
+                         output_path=out, quality="balanced")
+    res = {"wall_s": round(time.time() - t0, 1)}
+else:
+    from app.render import benchmark, pipeline, sessions
+    from app.render.types import PipelineConfig
+    opts = pipeline.RenderOptions(quality="auto" if engine == "v21" else "quality")
+    identity = pipeline.load_source([source])
+    extra = {}
+    if engine == "v21":
+        tb = time.time()
+        cfg, report = benchmark.run(target, identity, opts, job)
+        extra = {"benchmark_s": round(time.time() - tb, 1),
+                 "winner": report["winner"]["label"],
+                 "from_cache": report.get("from_cache", False),
+                 "candidates": len(report["candidates"])}
+        opts.config = cfg
+    else:
+        opts.config = PipelineConfig(swapper="hyperswap_1a_256",
+                                     enhancer="gpen_bfr_512",
+                                     enhancer_blend=0.7, mask="model")
+    rr = pipeline.render([source], target, out, opts, identity=identity)
+    res = rr.as_dict()
+    res.update(extra)
+    res["wall_s"] = round(time.time() - t0, 1)
+    res["vram_mb"] = (sessions.gpu_info().get("vram_used_mb") or 0)
+print("@@RESULT@@" + json.dumps(res, default=str))
+"""
+
+
+def _run_isolated(engine: str, source: str, target: str, out: str,
+                  job: str) -> dict[str, Any]:
+    script = _RUNNER % {"root": str(ROOT)}
+    p = subprocess.run([sys.executable, "-c", script, engine, source, target, out, job],
+                       capture_output=True, text=True, timeout=5400)
+    for line in (p.stdout or "").splitlines():
+        if line.startswith("@@RESULT@@"):
+            return json.loads(line[len("@@RESULT@@"):])
+    raise RuntimeError(
+        f"{engine} runner produced no result: {(p.stderr or p.stdout)[-300:]}")
 
 
 def render_v2_fixed(source: str, target: str, out: str) -> dict[str, Any]:
@@ -96,10 +156,9 @@ def main(argv: list[str]) -> int:
         print(f"\n=== {name} ===", flush=True)
         row: dict[str, Any] = {"clip": name}
 
-        for tag, fn in (("v1", lambda o: render_v1(source, str(clip), o)),
-                        ("v2", lambda o: render_v2_fixed(source, str(clip), o)),
-                        ("v21", lambda o: render_v21_auto(source, str(clip), o,
-                                                          f"cmp_{name}"))):
+        for tag in ("v1", "v2", "v21"):
+            fn = (lambda o, _t=tag: _run_isolated(_t, source, str(clip), o,
+                                                  f"cmp_{name}"))
             out = str(OUT / f"{name}__{tag}.mp4")
             row[f"{tag}_output"] = out
             try:

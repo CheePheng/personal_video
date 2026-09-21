@@ -42,22 +42,19 @@ def _make(spec: ModelSpec, allow_cpu: bool) -> ort.InferenceSession:
     opts.log_severity_level = 3
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    # ORT's default CUDA arena strategy (kNextPowerOfTwo) doubles its
-    # allocation each time it grows and never hands the memory back while the
-    # process lives. Loading nine swappers in sequence therefore accumulates
-    # several GB of arena even after the Python sessions are released, and the
-    # benchmark ends up running with a few hundred MB free -- which is slow
-    # rather than fatal, and very hard to attribute. kSameAsRequested allocates
-    # what is actually needed.
-    cuda_opts = {"arena_extend_strategy": "kSameAsRequested"}
-    providers: list[Any] = []
-    for prov in spec.providers:
-        if prov == "CPUExecutionProvider" and not allow_cpu:
-            continue
-        providers.append(("CUDAExecutionProvider", cuda_opts)
-                         if prov == "CUDAExecutionProvider" else prov)
-    if not providers:
-        providers = [("CUDAExecutionProvider", cuda_opts)]
+    # ORT's default CUDA arena (kNextPowerOfTwo) is deliberately kept.
+    # kSameAsRequested was tried to make VRAM easier to reclaim while cycling
+    # nine swappers, and measured WORSE on this machine: session build 0.50s ->
+    # 1.23s and steady inference 36.2 -> 40.7 ms, i.e. ~12% slower on every
+    # frame of every render. The VRAM starvation it was meant to solve had a
+    # different cause -- an eviction loop that released every session after
+    # every benchmark candidate -- which is fixed in benchmark.py. Paying 12%
+    # on all rendering to paper over that would have been the wrong trade.
+    providers = list(spec.providers)
+    if not allow_cpu:
+        providers = [p for p in providers if p != "CPUExecutionProvider"]
+        if not providers:
+            providers = ["CUDAExecutionProvider"]
 
     try:
         sess = ort.InferenceSession(str(path), sess_options=opts, providers=providers)

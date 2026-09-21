@@ -259,8 +259,13 @@ def score_config(cfg: PipelineConfig, samples: list[tuple[int, np.ndarray, dict]
         }
         per_frame.append(row)
         prev_out, prev_emb = out, emb
-        vram = sessions.gpu_info().get("vram_used_mb") or 0
-        vram_peak = max(vram_peak, int(vram))
+
+    # VRAM is sampled ONCE per candidate, not once per frame. gpu_info()
+    # shells out to nvidia-smi, which costs hundreds of milliseconds to
+    # launch; calling it per frame meant ~240 process spawns per benchmark and
+    # left the GPU idling at 3% while the run waited on subprocess startup.
+    # It was the single largest cost in Auto Max.
+    vram_peak = int(sessions.gpu_info().get("vram_used_mb") or 0)
 
     def col(key: str) -> list[Optional[float]]:
         return [r.get(key) for r in per_frame if "error" not in r]

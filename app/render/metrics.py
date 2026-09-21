@@ -150,6 +150,20 @@ def flow_warped_difference(prev: np.ndarray, cur: np.ndarray,
     if prev.size == 0 or cur.size == 0 or prev.shape != cur.shape:
         return 0.0
 
+    # Farneback is CPU-bound and scales with area. On a 4K close-up the face
+    # crop alone can be ~700px square, and the benchmark runs this for every
+    # sampled frame of every candidate -- hundreds of times. Flicker is a
+    # RELATIVE measure, so computing it on a bounded copy gives the same
+    # ranking for a fraction of the cost. Measured: this was the single
+    # largest contributor to Auto Max wall time, above all GPU inference.
+    FLOW_MAX = 192
+    h0, w0 = prev.shape[:2]
+    scale = min(1.0, FLOW_MAX / max(h0, w0))
+    if scale < 1.0:
+        size = (max(16, int(w0 * scale)), max(16, int(h0 * scale)))
+        prev = cv2.resize(prev, size, interpolation=cv2.INTER_AREA)
+        cur = cv2.resize(cur, size, interpolation=cv2.INTER_AREA)
+
     g0 = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
     g1 = cv2.cvtColor(cur, cv2.COLOR_BGR2GRAY)
     flow = cv2.calcOpticalFlowFarneback(g0, g1, None, 0.5, 3, 15, 3, 5, 1.2, 0)

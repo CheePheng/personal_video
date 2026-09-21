@@ -33,11 +33,25 @@ DEFAULT_CLIPS = ["A_single_frontal", "K_other_larger", "J_two_crossing",
 
 
 def render_v1(source: str, target: str, out: str) -> dict[str, Any]:
+    """Render with the V1 engine, then free its models.
+
+    V1 keeps its OWN session cache, separate from app.render.sessions. Left
+    resident it holds several GB of VRAM for the rest of the process, which
+    silently starves whatever runs next -- in this harness, V2.1's nine-swapper
+    sweep, turning a ~50 second benchmark into tens of minutes.
+    """
+    import gc
+
     from app import swapper
     t0 = time.time()
     res = swapper.run_swap(source_image=source, target_video=target,
                            output_path=out, quality="balanced")
     res["wall_s"] = round(time.time() - t0, 1)
+    try:
+        swapper._sessions.clear()
+    except AttributeError:
+        pass
+    gc.collect()
     return res
 
 
@@ -61,7 +75,13 @@ def measure(out_path: str, source_embedding: np.ndarray,
 
     info = V.probe(out_path)
     src_info = V.probe(original)
-    n = min(info.total_frames, 48)
+    # 20 sampled frames, not 48. Scoring runs two detections, an embedding per
+    # detected face and an optical-flow pass per frame, for every engine --
+    # several hundred model calls per clip, in the same process that is also
+    # driving the renders. Halving the sample barely moves the means (these
+    # are per-frame metrics averaged over a clip) and removes the dominant
+    # cost of the comparison harness.
+    n = min(info.total_frames, 20)
     idxs = sorted(set(int(round(i)) for i in np.linspace(0, max(info.total_frames - 1, 0), n)))
 
     rendered = V.sample_frames(out_path, info, idxs)
