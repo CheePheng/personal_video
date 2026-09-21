@@ -74,7 +74,7 @@ def main() -> int:
 
     cfg = res.config.describe() if res.config else "?"
     check("render completed", res.frames > 0, "%d frames in %.1fs" % (res.frames, wall))
-    check("preset is Balanced (with restoration)", "gpen_bfr_512" in cfg, cfg)
+    check("preset is Balanced (measured best)", "no-enhance" in cfg and "mask:model" in cfg, cfg)
     check("no pixel boost in effect", "boost" not in cfg, cfg)
     check("CUDA provider bound", bool(res.gpu.get("cuda_active")),
           str(res.gpu.get("session_providers")))

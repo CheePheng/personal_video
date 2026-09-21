@@ -151,7 +151,31 @@ def apply_preset(opts: "RenderOptions") -> "RenderOptions":
         #
         # use_parsing/use_occlusion stay True so Auto Max can still choose
         # the heavier modes per video where they genuinely help.
-        opts.config = PipelineConfig(swapper="hyperswap_1a_256",
+        # alphaface_256, not hyperswap_1a_256. The swapper tournament was
+        # first run under mask="full", and re-running it under mask="model"
+        # inverted the ranking -- hyperswap_1a went from first to worst of
+        # the six finalists, because it leaves far more of the target behind
+        # (arc->B 0.203 against GHOST's 0.03-0.05):
+        #
+        #                arc->A   arc->B     gap   sf->A   sfGap  exprMouth
+        #   alphaface    0.8649   0.0986  0.7663  0.7725  0.6223    0.00683
+        #   ghost_3      0.8211   0.0343  0.7868  0.7608  0.7673    0.02958
+        #   ghost_2      0.8257   0.0422  0.7835  0.7633  0.7405    0.02429
+        #   ghost_1      0.8073   0.0477  0.7596  0.7935  0.7904    0.02967
+        #   hyperswap_1b 0.7685   0.1584  0.6102  0.7335  0.5898    0.01665
+        #   hyperswap_1a 0.7454   0.2029  0.5425  0.6905  0.4561    0.01457
+        #
+        # GHOST scores a marginally better identity GAP, and was rejected on
+        # it. Visually it mangles the mouth: an open smile with teeth comes
+        # back closed, asymmetric and grimacing. The last column is why --
+        # mouth-opening drift, where GHOST distorts jaw opening ~4x more than
+        # alphaface. The tournament's expression term saw this but at weight
+        # 0.13 could not outvote a 0.08 identity gain, which is precisely the
+        # "wins on identity, ruins the performance" failure to guard against.
+        #
+        # alphaface takes it: best absolute source likeness, top-2 on BOTH
+        # judges, and the lowest mouth-opening drift of all six.
+        opts.config = PipelineConfig(swapper="alphaface_256",
                                      enhancer=None, enhancer_blend=0.0,
                                      mask="model")
     return opts

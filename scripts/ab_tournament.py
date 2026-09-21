@@ -197,6 +197,8 @@ def setup():
     src_sface = (judges.embed(src, sf[0].kps)
                  if sf and judges.available() else None)
     opts = RenderOptions(quality="quality")
+    opts.use_parsing = False
+    opts.use_occlusion = False
     return identity, src_sface, opts
 
 
@@ -231,7 +233,10 @@ def main() -> int:
         print("Phase 1: swapper tournament on A->B (no pixel boost)")
         rows = []
         for name in SWAPPERS:
-            cfg = PipelineConfig(swapper=name, mask="full", label=name)
+            # mask="model": measured +0.083 identity over the parsing/XSeg
+            # stack, so ranking swappers under "full" compares them through
+            # a mask that suppresses the very thing being measured.
+            cfg = PipelineConfig(swapper=name, mask="model", label=name)
             try:
                 rows.append(evaluate(cfg, identity, opts, src_sface))
                 r = rows[-1]["aggregate"]
