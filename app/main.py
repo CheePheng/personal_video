@@ -275,6 +275,11 @@ class JobReq(BaseModel):
     quality: str = "quality"
     face_mode: str = "reference"
     engine: str = "v2"          # v2 | v1 (v1 kept as the regression fallback)
+    # Optional render window, in seconds from the start of the file. There is
+    # deliberately no duration cap: a long video is a cost to be reported, not
+    # an error to refuse.
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
 
 
 @app.post("/api/jobs")
@@ -289,16 +294,47 @@ def create_job(req: JobReq) -> dict:
 
     jid_name = os.urandom(6).hex()
     output = str(OUTPUTS / f"{jid_name}.mp4")
+    start = max(0.0, float(req.start_time)) if req.start_time else None
+    end = float(req.end_time) if req.end_time else None
+    if start is not None and end is not None and end <= start:
+        raise HTTPException(400, f"end time ({end}s) must be after start ({start}s)")
+
     opts = {
         "quality": req.quality if req.quality in QUALITY else "quality",
         "face_mode": req.face_mode,
         "engine": "v1" if req.engine == "v1" else "v2",
         "n_sources": len(sources),
+        "start_time": start,
+        "end_time": end,
     }
 
     jid = jobs.create_job(sources[0], target, output, json.dumps(opts))
     jobs.start(jid, sources, target, output, opts)
     return {"job_id": jid}
+
+class EstimateReq(BaseModel):
+    target_id: str
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+
+
+@app.post("/api/estimate")
+def estimate_job(req: EstimateReq) -> dict:
+    """Cost of a render before committing to it.
+
+    Reported, never enforced. A long video is the user's decision; the app's
+    job is to say up front how long it will take and whether the disk can
+    hold it, rather than discovering either at 80%.
+    """
+    from app.render import longform, pipeline
+
+    target = str(resolve_media(req.target_id))
+    opts = pipeline.RenderOptions(start_time=req.start_time, end_time=req.end_time)
+    try:
+        return longform.estimate(target, opts)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"could not inspect that video: {e}") from e
+
 
 @app.get("/api/jobs/{jid}")
 def job_status(jid: str) -> dict:

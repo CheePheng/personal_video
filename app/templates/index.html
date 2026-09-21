@@ -79,6 +79,16 @@
   details.adv[open] summary::before{content:"▾  "}
   details.adv > *:not(summary){margin-top:10px}
   .advnote{color:var(--muted);font-size:11.5px;line-height:1.45}
+  .vinfo{margin-top:8px;font-size:11.5px;color:var(--muted);font-variant-numeric:tabular-nums}
+  .range{margin-top:10px;border-top:1px solid var(--line);padding-top:10px}
+  .rlab{font-size:12.5px;color:var(--muted);margin-right:14px;cursor:pointer}
+  .rlab input{margin-right:5px;vertical-align:middle}
+  .rrow{display:flex;align-items:center;gap:9px;margin-top:9px;font-size:12px;color:var(--muted)}
+  .rrow span{width:34px;flex:none}
+  .rrow b{width:64px;flex:none;text-align:right;color:var(--text);font-weight:600;
+          font-variant-numeric:tabular-nums}
+  .rrow input[type=range]{flex:1}
+  .rsel{margin-top:9px;font-size:12px;color:var(--accent-2);font-variant-numeric:tabular-nums}
 
   /* ---------- library ---------- */
   .lib-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px}
@@ -138,6 +148,22 @@
       </div>
       <input type="file" id="fileV" accept="video/*" class="hide">
       <div class="picked hide" id="pickV"><span class="nm"></span></div>
+      <div class="vinfo hide" id="vinfo"></div>
+      <div class="range hide" id="rangeBox">
+        <label class="rlab"><input type="radio" name="rmode" value="full" checked> Whole video</label>
+        <label class="rlab"><input type="radio" name="rmode" value="part"> Part of it</label>
+        <div class="hide" id="rangeCtl">
+          <div class="rrow">
+            <span>Start</span><input type="range" id="rStart" min="0" max="100" step="0.1" value="0">
+            <b id="rStartT">0:00</b>
+          </div>
+          <div class="rrow">
+            <span>End</span><input type="range" id="rEnd" min="0" max="100" step="0.1" value="100">
+            <b id="rEndT">0:00</b>
+          </div>
+          <div class="rsel" id="rSel"></div>
+        </div>
+      </div>
     </div>
     <div>
       <label class="fld">2 &middot; Face to use</label>

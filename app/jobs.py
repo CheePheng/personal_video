@@ -160,12 +160,19 @@ class JobRunner(threading.Thread):
         frames, total = extra.get("frames"), extra.get("total")
         if frames and total:
             msg = f"frame {frames} of {total}"
+            if extra.get("segments"):
+                # On a long render the frame count alone is hard to place;
+                # the segment counter is also what proves a resumed job
+                # picked up where it left off.
+                msg += f"  -  segment {extra.get('segment')}/{extra['segments']}"
             fps = extra.get("fps")
             if fps:
                 msg += f"  -  {fps:.1f} fps"
                 remain = (total - frames) / max(fps, 1e-6)
                 if remain > 1:
-                    msg += f"  -  ~{int(remain // 60)}m {int(remain % 60)}s left"
+                    h, rem = int(remain // 3600), int(remain % 3600)
+                    msg += (f"  -  ~{h}h {rem // 60}m left" if h
+                            else f"  -  ~{rem // 60}m {rem % 60}s left")
         elif extra.get("candidate"):
             msg = f"{extra['candidate']}  ({extra.get('index', '?')}/{extra.get('total', '?')})"
         elif extra.get("winner"):
@@ -228,13 +235,15 @@ class JobRunner(threading.Thread):
 
     # ------------------------------------------------------------- engines
     def _run_v2(self) -> dict[str, Any]:
-        from app.render import benchmark, pipeline
+        from app.render import benchmark, longform, pipeline
         from app.render.types import PipelineConfig
 
         quality = self.opts.get("quality", "quality")
         opts = pipeline.RenderOptions(
             quality=quality,
             swap_all_faces=(self.opts.get("face_mode") == "many"),
+            start_time=self.opts.get("start_time"),
+            end_time=self.opts.get("end_time"),
         )
 
         identity = pipeline.load_source(self.sources)
@@ -255,8 +264,12 @@ class JobRunner(threading.Thread):
                                          enhancer="gpen_bfr_512", enhancer_blend=0.7,
                                          mask="full")
 
-        res = pipeline.render(self.sources, self.target, self.output, opts,
-                              self._on_progress, lambda: self.cancelled, identity)
+        # render_long segments and checkpoints anything over a few minutes and
+        # falls straight through to pipeline.render for short clips, so an
+        # hour-long job survives a crash without restarting from zero.
+        res = longform.render_long(self.sources, self.target, self.output, opts,
+                                   self._on_progress, lambda: self.cancelled,
+                                   identity)
         d = res.as_dict()
         if bench_report:
             d["benchmark_winner"] = bench_report["winner"]["label"]

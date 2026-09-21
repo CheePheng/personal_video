@@ -23,9 +23,13 @@ const el = {
   libGrid: $("libGrid"), libEmpty: $("libEmpty"), libCount: $("libCount"),
   modal: $("modal"), modalVid: $("modalVid"), modalClose: $("modalClose"),
   statline: $("statline"), opts: $("opts"),
+  vinfo: $("vinfo"), rangeBox: $("rangeBox"), rangeCtl: $("rangeCtl"),
+  rStart: $("rStart"), rEnd: $("rEnd"), rStartT: $("rStartT"), rEndT: $("rEndT"),
+  rSel: $("rSel"),
 };
 
 let videoFile = null, faceFiles = [], jobId = null, polling = null, cancelled = false;
+let videoDuration = 0;   // seconds, read locally before any upload happens
 
 /* ---------- file pickers ---------- */
 function wireDrop(drop, input, onPick) {
@@ -40,12 +44,73 @@ function wireDrop(drop, input, onPick) {
 }
 const fmt = (b) => b > 1e9 ? (b/1e9).toFixed(1)+" GB" : b > 1e6 ? (b/1e6).toFixed(0)+" MB" : (b/1e3).toFixed(0)+" KB";
 
+const clockHMS = (sec) => {
+  sec = Math.max(0, sec || 0);
+  const h = Math.floor(sec / 3600), m = Math.floor((sec % 3600) / 60);
+  const s = Math.floor(sec % 60);
+  return h ? `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`
+           : `${m}:${String(s).padStart(2, "0")}`;
+};
+
 wireDrop(el.dropV, el.fileV, (f) => {
   videoFile = f;
   el.pickV.classList.remove("hide");
   el.pickV.querySelector(".nm").textContent = `${f.name} (${fmt(f.size)})`;
+  // Read duration/resolution from the LOCAL file, before uploading a byte.
+  // On a multi-GB video that is the difference between choosing a range up
+  // front and waiting out an upload to discover you only wanted 3 minutes.
+  probeLocally(f);
   refresh();
 });
+
+function probeLocally(file) {
+  const v = document.createElement("video");
+  v.preload = "metadata";
+  v.onloadedmetadata = () => {
+    videoDuration = v.duration || 0;
+    el.vinfo.textContent =
+      `${clockHMS(videoDuration)}  ·  ${v.videoWidth}x${v.videoHeight}  ·  ${fmt(file.size)}`;
+    el.vinfo.classList.remove("hide");
+    for (const r of [el.rStart, el.rEnd]) { r.min = 0; r.max = videoDuration; r.step = 0.1; }
+    el.rStart.value = 0;
+    el.rEnd.value = videoDuration;
+    el.rangeBox.classList.remove("hide");
+    updateRange();
+    URL.revokeObjectURL(v.src);
+  };
+  v.onerror = () => {
+    // Not fatal: the server probes properly with ffprobe anyway. We just
+    // cannot offer a range picker for a container the browser will not read.
+    el.vinfo.textContent = `${fmt(file.size)}  ·  duration unavailable in browser`;
+    el.vinfo.classList.remove("hide");
+    el.rangeBox.classList.add("hide");
+    videoDuration = 0;
+  };
+  v.src = URL.createObjectURL(file);
+}
+
+function rangeMode() {
+  const r = document.querySelector('input[name="rmode"]:checked');
+  return r ? r.value : "full";
+}
+
+function updateRange() {
+  const part = rangeMode() === "part";
+  el.rangeCtl.classList.toggle("hide", !part);
+  let a = parseFloat(el.rStart.value) || 0;
+  let b = parseFloat(el.rEnd.value) || videoDuration;
+  // Keep the handles from crossing, and keep at least a second selected.
+  if (b < a + 1) { b = Math.min(videoDuration, a + 1); el.rEnd.value = b; }
+  el.rStartT.textContent = clockHMS(a);
+  el.rEndT.textContent = clockHMS(b);
+  el.rSel.textContent = part
+    ? `Rendering ${clockHMS(b - a)} of ${clockHMS(videoDuration)}`
+    : "";
+}
+
+for (const n of document.querySelectorAll('input[name="rmode"]')) n.onchange = updateRange;
+el.rStart.oninput = updateRange;
+el.rEnd.oninput = updateRange;
 wireDrop(el.dropF, el.fileF, (f, all) => {
   // Accept several photos of the same person; the renderer fuses them into
   // one identity, weighted by how usable each face is.
@@ -124,12 +189,17 @@ el.go.onclick = async () => {
     for (const f of faceFiles) sourceIds.push(await uploadFile(f, () => {}));
     showStage("Starting render", 97, "starting");
 
-    const res = await postJSON("/api/jobs", {
+    const body = {
       source_ids: sourceIds,
       target_id: targetId,
       quality: el.quality.value,
       face_mode: el.whichface.value,
-    });
+    };
+    if (rangeMode() === "part" && videoDuration > 0) {
+      body.start_time = parseFloat(el.rStart.value) || 0;
+      body.end_time = parseFloat(el.rEnd.value) || videoDuration;
+    }
+    const res = await postJSON("/api/jobs", body);
     jobId = res.job_id;
     localStorage.setItem(LS_KEY, jobId);
     startPolling();
@@ -191,7 +261,9 @@ function showStats(j) {
   const fps = m.match(/([\d.]+) fps/);
   if (fps) bits.push(`${fps[1]} fps`);
   const cand = m.match(/^(\S+ \+ \S+|\S+ bare)/);
-  if (cand && /benchmark|restor/i.test(j.phase || "")) bits.push(cand[1]);
+  if (cand && /benchmark|restor|mask/i.test(j.phase || "")) bits.push(cand[1]);
+  const seg = m.match(/segment (\d+)\/(\d+)/);
+  if (seg) bits.push(`segment ${seg[1]}/${seg[2]}`);
   if (!bits.length) { el.statline.classList.add("hide"); return; }
   el.statline.replaceChildren();
   for (const b of bits) {

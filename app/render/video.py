@@ -150,17 +150,32 @@ def probe(path: str) -> VideoInfo:
         pix_fmt=video.get("pix_fmt"))
 
 
-def decode(path: str, info: VideoInfo) -> subprocess.Popen:
-    """Open a raw BGR24 frame pipe. ffmpeg applies rotation for us."""
-    # -autorotate is ffmpeg's default, but passed explicitly so a future
-    # ffmpeg default change cannot silently start rendering phone video
-    # sideways. It must precede -i to apply to that input.
-    # -autorotate is a BOOLEAN flag (no value) and must precede -i to bind to
-    # that input. Passing "1" makes ffmpeg read it as an output URL and abort.
-    # It is already the default; stated explicitly so a future default change
-    # cannot silently start rendering phone video sideways.
-    cmd = [FFMPEG, "-v", "error", "-nostdin", "-autorotate",
-           "-i", str(path), "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+def decode(path: str, info: VideoInfo,
+           start: Optional[float] = None,
+           duration: Optional[float] = None) -> subprocess.Popen:
+    """Open a raw BGR24 frame pipe, optionally for a sub-range only.
+
+    ``-ss`` goes BEFORE ``-i`` so ffmpeg seeks the input rather than decoding
+    and discarding everything up to the start point -- on an hour-long file
+    that is the difference between seconds and minutes. Because we decode
+    rather than stream-copy, modern ffmpeg makes that seek frame-accurate.
+
+    ``-t`` (duration) rather than ``-to``: after an input seek the output
+    clock restarts at zero, so an absolute end time would mean the wrong
+    thing.
+
+    ``-autorotate`` is a BOOLEAN flag and must precede ``-i`` to bind to that
+    input; passing it a value makes ffmpeg read the value as an output URL and
+    abort. It is already the default, stated explicitly so a future default
+    change cannot silently start rendering phone video sideways.
+    """
+    cmd = [FFMPEG, "-v", "error", "-nostdin", "-autorotate"]
+    if start and start > 0:
+        cmd += ["-ss", f"{start:.6f}"]
+    cmd += ["-i", str(path)]
+    if duration and duration > 0:
+        cmd += ["-t", f"{duration:.6f}"]
+    cmd += ["-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
     try:
         return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except OSError as e:
@@ -230,7 +245,8 @@ def open_encoder(out_path: str, info: VideoInfo, quality: str = "quality"
 
 
 def finalize(silent_video: str, original: str, out_path: str,
-             info: VideoInfo) -> dict[str, Any]:
+             info: VideoInfo, start: Optional[float] = None,
+             duration: Optional[float] = None) -> dict[str, Any]:
     """Mux audio back and make the file seekable.
 
     Audio is stream-copied when it is already AAC/MP3 -- lossless and fast.
@@ -242,8 +258,15 @@ def finalize(silent_video: str, original: str, out_path: str,
     if info.has_audio:
         copyable = (info.audio_codec or "").lower() in ("aac", "mp3")
         acodec = ["-c:a", "copy"] if copyable else ["-c:a", "aac", "-b:a", "192k"]
+        # The audio must be cut to exactly the same window as the video, or a
+        # ranged render ends up with the soundtrack from the start of the file.
+        audio_in = ["-i", str(original)]
+        if start and start > 0:
+            audio_in = ["-ss", f"{start:.6f}"] + audio_in
+        if duration and duration > 0:
+            audio_in += ["-t", f"{duration:.6f}"]
         cmd = [FFMPEG, "-v", "error", "-nostdin", "-y",
-               "-i", str(silent_video), "-i", str(original),
+               "-i", str(silent_video), *audio_in,
                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", *acodec,
                "-shortest", "-movflags", "+faststart", str(out_path)]
         r = subprocess.run(cmd, capture_output=True, timeout=3600)
@@ -265,6 +288,33 @@ def finalize(silent_video: str, original: str, out_path: str,
     else:
         Path(silent_video).replace(out_path)
     return result
+
+
+def concat(parts: list[str], out_path: str) -> None:
+    """Join rendered segments losslessly with the concat demuxer.
+
+    Stream copy, so joining costs no quality and no re-encode -- which is the
+    whole point of rendering a long video in resumable pieces.
+    """
+    listing = Path(out_path).with_suffix(".parts.txt")
+    listing.write_text(
+        "".join("file '" + Path(p).as_posix() + "'" + chr(10) for p in parts),
+        encoding="utf-8")
+    try:
+        r = subprocess.run(
+            [FFMPEG, "-v", "error", "-nostdin", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(listing), "-c", "copy", str(out_path)],
+            capture_output=True, timeout=3600)
+        if r.returncode != 0 or not Path(out_path).exists():
+            raise RenderError(
+                "could not join rendered segments: "
+                f"{r.stderr.decode('utf-8', 'replace')[:300]}")
+    finally:
+        listing.unlink(missing_ok=True)
+
+
+def free_disk_bytes(path: str) -> int:
+    return shutil.disk_usage(Path(path).parent if Path(path).suffix else path).free
 
 
 def sample_frames(path: str, info: VideoInfo, indices: list[int]) -> dict[int, np.ndarray]:

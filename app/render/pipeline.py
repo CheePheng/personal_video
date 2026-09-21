@@ -65,6 +65,11 @@ class RenderOptions:
     color_match: bool = True
     temporal: bool = True
     max_frames: Optional[int] = None          # benchmarking/tests only
+    # Render only part of the target. Seconds from the start of the file;
+    # end_time None means "to the end". Used both for a user-chosen range and
+    # for the segmented long-video renderer.
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
 
 
 @dataclass
@@ -207,6 +212,22 @@ def render(source_paths: list[str], target_path: str, output_path: str,
     info = video.probe(target_path)
     res.video = info.as_dict()
 
+    # Resolve the requested window against the real duration, so a range that
+    # runs off the end of the file clamps instead of producing zero frames.
+    src_dur = info.duration or 0.0
+    start = max(0.0, float(opts.start_time or 0.0))
+    end = float(opts.end_time) if opts.end_time else (src_dur or 0.0)
+    if src_dur:
+        end = min(end, src_dur)
+    span = max(0.0, end - start) if end else 0.0
+    ranged = bool(start > 0 or (span and src_dur and span < src_dur - 1e-3))
+    if ranged and span <= 0:
+        raise RenderError(
+            f"the selected range is empty (start {start:.3f}s, end {end:.3f}s, "
+            f"source is {src_dur:.3f}s long)")
+    res.video["range"] = {"start": round(start, 3), "end": round(end, 3),
+                          "duration": round(span, 3)} if ranged else None
+
     if identity is None:
         identity = load_source(source_paths)
     t_prep = time.time()
@@ -228,7 +249,9 @@ def render(source_paths: list[str], target_path: str, output_path: str,
     tracker = FaceTracker(diag, opts.identity_floor) if opts.swap_all_faces else None
 
     cut_detector = metrics.SceneCutDetector()
-    dec = video.decode(target_path, info)
+    dec = video.decode(target_path, info,
+                       start=start if ranged else None,
+                       duration=span if ranged else None)
     tmp = str(Path(output_path).with_suffix(".silent.mp4"))
     enc, enc_name = video.open_encoder(tmp, info, "fast" if opts.quality == "fast" else "quality")
     res.encoder = enc_name
@@ -243,7 +266,10 @@ def render(source_paths: list[str], target_path: str, output_path: str,
         res.fallbacks.append(f"source carries {info.rotation}deg rotation metadata; "
                              "applied during decode.")
 
-    total = opts.max_frames or info.total_frames
+    # Progress must count the frames we will ACTUALLY render, not the whole
+    # file, or a 2-minute range out of an hour would sit near 3% and finish.
+    total = opts.max_frames or (
+        int(round(span * info.fps)) if ranged else info.total_frames)
     done = 0
     prev_frame: Optional[np.ndarray] = None
     cancelled = False
@@ -376,7 +402,10 @@ def render(source_paths: list[str], target_path: str, output_path: str,
     t_render = time.time()
 
     emit("restoring audio", 99.5)
-    res.video.update(video.finalize(tmp, target_path, output_path, info))
+    res.video.update(video.finalize(
+        tmp, target_path, output_path, info,
+        start=start if ranged else None,
+        duration=span if ranged else None))
 
     res.timings = {
         "prepare_s": round(t_prep - t_start, 2),
