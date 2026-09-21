@@ -123,9 +123,37 @@ def apply_preset(opts: "RenderOptions") -> "RenderOptions":
         #
         # Auto Max may still SELECT a restorer per video -- it is scored per
         # candidate there. This is only the fixed default.
+        # mask="model", not "full". Measured on the A->B set across 10
+        # categories, the swapper's own mask beats the parsing+XSeg stack on
+        # every identity metric and both judges, by the largest margin found
+        # anywhere in this pass:
+        #
+        #             arcMean  arcWorst   sfMean     gap    seam
+        #   model      0.7487    0.6790   0.6930  0.5479  1.2331
+        #   parsing    0.6663    0.5599   0.6363  0.3832  0.7014
+        #   full       0.6657    0.5599   0.6363  0.3823  0.7017
+        #
+        # +0.083 arc, +0.119 worst frame, +0.166 source-minus-target gap.
+        # BiSeNet and XSeg were excluding large parts of the face, so much of
+        # the swapped result was never composited and the output stayed
+        # closer to the target.
+        #
+        # The higher seam number is a longer boundary, not a worse one: with
+        # more of the face replaced there is simply more edge to measure, and
+        # no halo is visible at any face size tested.
+        #
+        # The obvious objection -- that this destroys occluders -- was
+        # checked and is wrong. On the glasses fixture, model preserves the
+        # frames and arms exactly as parsing and full do, because HyperSwap
+        # emits its own mask and already declines to paint over foreground.
+        # Parsing and XSeg were paying 0.08 identity to protect something
+        # that was not at risk.
+        #
+        # use_parsing/use_occlusion stay True so Auto Max can still choose
+        # the heavier modes per video where they genuinely help.
         opts.config = PipelineConfig(swapper="hyperswap_1a_256",
                                      enhancer=None, enhancer_blend=0.0,
-                                     mask="full")
+                                     mask="model")
     return opts
 
 
