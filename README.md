@@ -110,6 +110,17 @@ parse. The pipeline lives in `app/render/` -- see [docs/V2_ARCHITECTURE.md](docs
 
 Progress is `frames_done / total_frames` -- a real count, not an estimate.
 
+### Scope: one face, one person
+
+This tool is built for a single target person. One source photo, one video with
+one person in it, one swapped face out. That assumption is what the quality
+work is tuned for.
+
+Multi-face swapping still exists behind **Advanced**, and the tracker that
+prevents identity switching is still there and still tested -- but it is not
+the supported path, and Auto Max no longer spends its scoring budget on
+"which person should I swap?" when there is only ever one.
+
 ### Quality modes
 
 | Mode | What it does |
@@ -129,8 +140,50 @@ installed model's SHA256 and the scoring algorithm version, so re-rendering
 the same job reuses the verdict (~4 min cold, instant warm) while changing a
 model or a metric invalidates it.
 
+Auto Max searches three stages: every installed swapper bare, then restoration
+model and blend on the leader, then **mask mode and colour matching** on
+whatever is winning. In testing all three sample videos chose a stage-three
+variant, so that last stage earns its cost.
+
 Auto Max writes its full report to `data/benchmarks/<job-id>.json`, and the
 library records exactly which pipeline won.
+
+### How the score is weighted
+
+Tuned for the single-person case -- "how good does this one face look?", not
+"which person is this?":
+
+| Term | Weight | Why |
+|---|---|---|
+| identity (mean) | 0.30 | does it look like you |
+| temporal stability | 0.18 | no flicker or crawl |
+| **identity worst-case** | 0.14 | the eye lands on the worst frame, not the average |
+| expression | 0.13 | the target keeps their own performance |
+| blending | 0.13 | seam, colour continuity, occlusion |
+| detail | 0.08 | sharpness and texture |
+| identity switches | 0.02 | defensive only -- see below |
+| speed | 0.02 | never traded against quality |
+
+`identity_switches` was 0.18 during the multi-person work. On single-person
+footage it should never fire, and a weighted term that is always constant is
+dead weight in the score -- the same defect as the hard-coded version of it
+found earlier. It is demoted rather than deleted, because it still catches a
+detector rescue or a reflection pulling the swap off-subject.
+
+`scripts/test_scoring.py` asserts, for every term, that degrading it changes
+the metric, in the right direction, and lowers the total. 43 checks.
+
+### Masks
+
+Four modes, and they are genuinely different pipelines (they used to be
+aliases, which meant Auto Max could not tell them apart):
+
+| Mode | What it uses |
+|---|---|
+| `oval` | geometric fallback only |
+| `model` | the swapper's own mask + feathered box |
+| `parsing` | + BiSeNet face parsing (hair, glasses, hat excluded) |
+| `full` | + XSeg occlusion (hands and objects in front of the face) |
 
 ### Measured decisions
 

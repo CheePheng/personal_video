@@ -272,6 +272,8 @@ async function loadLibrary() {
       it.engine ? it.engine.toUpperCase() : null,
       it.swapper || null,
       it.enhancer ? `${it.enhancer} ${Math.round((it.enhancer_blend || 0) * 100)}%` : "no restore",
+      it.mask_mode ? `mask:${it.mask_mode}` : null,
+      it.color_match === false ? "no colour match" : null,
       it.benchmark_winner ? `auto-picked from ${it.benchmark_candidates}` : null,
       (it.identity_switches === 0) ? "0 id switches" : null,
     ].filter(Boolean);

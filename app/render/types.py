@@ -131,6 +131,10 @@ class PipelineConfig:
         else:
             bits.append("no-enhance")
         bits.append(f"mask:{self.mask}")
+        # Colour match is a real pipeline difference that Auto Max can choose
+        # to turn off, so it belongs in the description the library records.
+        if not self.color_match:
+            bits.append("no-colour-match")
         if self.pixel_boost:
             bits.append(f"boost:{self.pixel_boost}")
         return " / ".join(bits)

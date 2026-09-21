@@ -434,6 +434,8 @@ def _pipeline_summary(opts: dict) -> dict:
         "enhancer": cfg.get("enhancer"),
         "enhancer_blend": cfg.get("enhancer_blend"),
         "mask_sources": res.get("mask_sources"),
+        "mask_mode": cfg.get("mask"),
+        "color_match": cfg.get("color_match"),
         "encoder": res.get("encoder"),
         "frames": res.get("frames"),
         "identity_switches": (res.get("tracking") or {}).get("identity_switches"),

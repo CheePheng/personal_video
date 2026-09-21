@@ -1127,3 +1127,57 @@ does not. Measured: ~4 minutes cold, instant warm, identical winner.
 Sessions are also evicted between candidates. Nine swappers plus four
 enhancers held resident is several GB that nothing needs simultaneously, and
 on a 4K frame that headroom is the difference between finishing and an OOM.
+
+---
+
+# Single-person narrowing (final scope)
+
+The product targets **one source identity, one person in the target video**.
+Nothing was rewritten for this; the change is to what the product *offers* and
+what the selector *optimises for*.
+
+## What changed
+
+**Scoring.** `identity_switches` fell from 0.18 to 0.02. It is retained, not
+removed: it still guards against a detector rescue or a reflection pulling the
+swap off-subject. But on single-person footage it never fires, and a weighted
+term that is constant across all candidates is dead weight -- precisely the
+defect found earlier when it was hard-coded to zero.
+
+`identity_worst` is a new term at 0.14. It was already being measured and
+never scored. A pipeline with a good mean and one ugly frame is worse to watch
+than one that is merely good throughout, because the eye lands on the bad
+frames. The remaining weight went to temporal (0.18), expression (0.13) and
+blending (0.13).
+
+**Mask modes became real.** `model` and `parsing` previously both enabled
+parsing *and* occlusion, so they were aliases and Auto Max could not
+distinguish them. They are now four distinct pipelines (`oval` / `model` /
+`parsing` / `full`), and Auto Max searches them in a third refinement stage
+along with colour matching. All three sample videos selected a stage-three
+variant, so the stage pays for itself.
+
+**Single-person fast path.** The per-frame ArcFace embedding costs ~30 ms of a
+~160 ms frame. When exactly one face is detected, a target is locked, and the
+detection sits where the tracker predicted (IoU >= 0.55), the embedding is
+skipped and the locked identity reused. Bounded to 8 consecutive frames and
+forced open on a scene cut, so a wrong lock cannot persist visibly. Measured:
+64 of 72 checks skipped, zero identity switches.
+
+Anything ambiguous -- more than one face, a positional jump, a re-acquisition
+after a gap -- takes the slow path and does a real embedding. The trade is
+never "save 30 ms and risk swapping the wrong thing".
+
+**UI.** One quality selector (Auto Max default). Multi-face moved behind
+`Advanced` and labelled as the untested path.
+
+## What deliberately did not change
+
+The tracker stays. "One person" is not "no tracking": the subject still turns
+profile, blurs, gets occluded, leaves frame and returns, and changes scale.
+The tracker is what keeps the swap on them through all of that, and what
+leaves a frame untouched rather than guessing when confidence drops.
+
+The multi-person regression tests stay too, as defensive coverage. They are no
+longer a development priority, but a change that silently broke identity
+tracking should still fail the suite.
