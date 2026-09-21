@@ -87,7 +87,11 @@ def seam_score(frame: np.ndarray, mask_full: np.ndarray) -> float:
 
     edge = float(mag[band].mean())
     inner = float(mag[interior].mean()) or 1.0
-    return max(0.0, edge / inner - 1.0)
+    # Raw ratio, NOT clamped at zero. A clean blend sits below 1.0 (the
+    # boundary is smoother than the face interior); a visible seam pushes it
+    # above 1.0. Clamping would collapse every good blend to the same 0.0 and
+    # leave this metric unable to rank the candidates it exists to separate.
+    return edge / inner
 
 
 def color_discontinuity(frame: np.ndarray, mask_full: np.ndarray) -> float:
@@ -203,7 +207,7 @@ def composite_score(m: dict) -> tuple[float, dict]:
         "temporal": (norm(m.get("identity_stability_mean"), 0.80, 0.99) * 0.5
                      + norm(m.get("flow_flicker_mean"), 2.0, 14.0, invert=True) * 0.3
                      + norm(m.get("mask_jitter_mean"), 0.01, 0.12, invert=True) * 0.2),
-        "blending": (norm(m.get("seam_mean"), 0.05, 0.85, invert=True) * 0.6
+        "blending": (norm(m.get("seam_mean"), 0.55, 1.45, invert=True) * 0.6
                      + norm(m.get("color_discontinuity_mean"), 2.0, 22.0, invert=True) * 0.4),
         "expression": norm(m.get("expression_delta_mean"), 0.008, 0.075, invert=True),
         "detail": (norm(m.get("sharpness_mean"), 60.0, 420.0) * 0.5
