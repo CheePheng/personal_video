@@ -19,6 +19,15 @@ from typing import Iterable
 
 from app.render.types import ModelSpec, Normalization, RenderError
 
+# PIXEL BOOST IS DISABLED, on measurement rather than opinion.
+# Benchmarked at 256/512/768/1024 on close-up, 1080p and 4K faces
+# (data/benchmarks/components/): identity fell at EVERY boost level
+# (0.978 -> 0.959 on a 212px face) while sharpness moved less than 2%
+# and render time rose. Tiling a 256px model across a larger crop gives
+# each tile only local context, so the model re-synthesises the face in
+# pieces -- more compute for a slightly worse likeness. The implementation
+# in swapping.swap() is correct and retained; the option is simply not
+# offered, because a setting that cannot improve the result is a trap.
 ASSETS = "https://github.com/facefusion/facefusion-assets/releases/download"
 REGISTRY_JSON = Path(__file__).resolve().parent.parent.parent / "models" / "registry.json"
 
@@ -70,7 +79,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1a_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(256, 512, 768, 1024),
+        pixel_boost=(),   # disabled -- measured harmful, see below
         notes="V1's model. Strong identity, ships its own mask."),
     "hyperswap_1b_256": ModelSpec(
         name="hyperswap_1b_256", filename="hyperswap_1b_256.onnx", role="swapper",
@@ -78,7 +87,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1b_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(256, 512, 768, 1024),
+        pixel_boost=(),   # disabled -- measured harmful, see below
         notes="Sibling of 1a; different identity/expression balance."),
     "hyperswap_1c_256": ModelSpec(
         name="hyperswap_1c_256", filename="hyperswap_1c_256.onnx", role="swapper",
@@ -86,7 +95,7 @@ SWAPPERS: dict[str, ModelSpec] = {
         license="ResearchRAIL-MS (FaceFusion) - no published terms text; treat as research-only",
         source_url=_u("models-3.3.0", "hyperswap_1c_256.onnx"),
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
-        pixel_boost=(256, 512, 768, 1024),
+        pixel_boost=(),   # disabled -- measured harmful, see below
         notes="Sibling of 1a; benchmarked, not assumed better."),
     "alphaface_256": ModelSpec(
         name="alphaface_256", filename="alphaface_256.onnx", role="swapper",

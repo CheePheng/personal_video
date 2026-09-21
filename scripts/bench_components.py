@@ -267,7 +267,27 @@ def bench_tensorrt(model: str = "hyperswap_1a_256", runs: int = 6) -> dict[str, 
     trt = run_with([("TensorrtExecutionProvider", {"trt_fp16_enable": False}),
                     "CUDAExecutionProvider", "CPUExecutionProvider"], "TensorRT")
 
+    # ORT lists TensorrtExecutionProvider whenever the python package is
+    # installed, but the provider DLL needs the TensorRT runtime alongside it.
+    # Without nvinfer it fails to load and ORT SILENTLY falls back to CUDA --
+    # the same class of trap as the CUDA/CPU fallback in docs/FINDINGS.md.
+    # Comparing CUDA against a session that is also CUDA would "prove"
+    # equivalence and a 1.00x speedup, which is meaningless. Detect it.
+    if trt and "TensorrtExecutionProvider" not in (trt.get("providers") or []):
+        result["tensorrt_actually_bound"] = False
+        result["verdict"] = (
+            "TensorRT NOT EVALUATED: the provider is listed by onnxruntime but its "
+            "DLL could not load (nvinfer runtime not installed), so the session "
+            "silently fell back to CUDA. No comparison was performed. Keeping CUDA.")
+        print(f"  {result['verdict']}")
+        for d in (cuda, trt):
+            if d:
+                d.pop("_out", None)
+        result["cuda"], result["tensorrt"] = cuda, trt
+        return result
+
     if cuda and trt:
+        result["tensorrt_actually_bound"] = True
         diffs = [float(np.abs(a.astype(np.float64) - b.astype(np.float64)).max())
                  for a, b in zip(cuda["_out"], trt["_out"])]
         result["max_abs_diff"] = max(diffs) if diffs else None

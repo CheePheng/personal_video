@@ -49,6 +49,12 @@ class RenderOptions:
     swap_all_faces: bool = False
     config: Optional[PipelineConfig] = None   # explicit pipeline (auto fills it)
     detect_threshold: float = 0.5
+    detector: str = "yoloface_8n"
+    # Benchmarked (data/benchmarks/components/): YOLOFace reached 1.000 recall
+    # at 8.2 ms against 0.829 for both SCRFD and RetinaFace on the hard-frame
+    # set, so it stays primary. SCRFD is a different architecture family, which
+    # is what makes it useful as a second opinion on frames YOLO drops.
+    detector_fallback: Optional[str] = "scrfd_2.5g"
     identity_floor: float = 0.28
     use_parsing: bool = True
     use_occlusion: bool = True
@@ -248,7 +254,9 @@ def render(source_paths: list[str], target_path: str, output_path: str,
                 if tracker:
                     tracker.reset_motion()
 
-            faces = detection.detect_robust(frame, opts.detect_threshold, opts.quality)
+            faces = detection.detect_with_fallback(
+                frame, opts.detect_threshold, opts.quality,
+                opts.detector, opts.detector_fallback)
             embeds: list[Optional[np.ndarray]] = []
             for f in faces:
                 try:

@@ -5,12 +5,12 @@ normalisation, whether the identity vector is pre-normalised, whether the model
 emits its own mask) comes from the registry ModelSpec, so adding a swapper does
 not touch this file.
 
-**Pixel boost** here is real, not cosmetic. The models are 256px natively;
-naively upscaling their output just blurs. Instead we align at the higher
-resolution, split that crop into a grid of 256px tiles, run the model on each
-tile, and reassemble. Each tile therefore carries genuine model detail at full
-resolution. It costs (boost/256)^2 model calls per face, which is why it is a
-benchmarked option rather than a default.
+**Pixel boost** is implemented here as real tiling -- align at the higher
+resolution, split into 256px tiles, run the model per tile, reassemble -- not
+as an upscale of a 256px output. It is nonetheless **disabled in the registry**,
+because benchmarking it showed identity falling at every level while sharpness
+barely moved (see registry.py). The code stays because it is correct and the
+measurement is worth being able to repeat; the option is not offered.
 """
 
 from __future__ import annotations
@@ -105,7 +105,15 @@ def swap(frame: np.ndarray, kps: np.ndarray, embedding: np.ndarray,
     base = spec.input_size
     size = base
     if pixel_boost and pixel_boost > base:
-        if spec.pixel_boost and pixel_boost not in spec.pixel_boost:
+        # An EMPTY pixel_boost tuple means "not offered", not "no restriction".
+        # Reading it as the latter would silently re-enable a setting that was
+        # disabled on measurement.
+        if not spec.pixel_boost:
+            raise RenderError(
+                f"pixel boost is disabled for '{model}': benchmarking showed it "
+                f"lowers identity at every level for no meaningful sharpness "
+                f"gain (see data/benchmarks/components/)")
+        if pixel_boost not in spec.pixel_boost:
             raise RenderError(
                 f"'{model}' does not support pixel boost {pixel_boost}; "
                 f"supported: {spec.pixel_boost}")
