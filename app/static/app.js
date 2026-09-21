@@ -97,15 +97,23 @@ function rangeMode() {
 function updateRange() {
   const part = rangeMode() === "part";
   el.rangeCtl.classList.toggle("hide", !part);
+  // Bound by the slider's own max, not the module variable. The two should
+  // agree, but a control that can only be wrong in sync with something else
+  // is a control that will eventually be wrong on its own.
+  const total = parseFloat(el.rEnd.max) || videoDuration || 0;
   let a = parseFloat(el.rStart.value) || 0;
-  let b = parseFloat(el.rEnd.value) || videoDuration;
-  // Keep the handles from crossing, and keep at least a second selected.
-  if (b < a + 1) { b = Math.min(videoDuration, a + 1); el.rEnd.value = b; }
+  let b = parseFloat(el.rEnd.value);
+  if (!isFinite(b)) b = total;
+  // Keep the handles from crossing and at least a second selected; if that
+  // is impossible, push the START back rather than collapsing the end to 0.
+  if (b < a + 1) {
+    if (total >= a + 1) { b = a + 1; }
+    else { b = total; a = Math.max(0, total - 1); el.rStart.value = a; }
+    el.rEnd.value = b;
+  }
   el.rStartT.textContent = clockHMS(a);
   el.rEndT.textContent = clockHMS(b);
-  el.rSel.textContent = part
-    ? `Rendering ${clockHMS(b - a)} of ${clockHMS(videoDuration)}`
-    : "";
+  el.rSel.textContent = part ? `Rendering ${clockHMS(b - a)} of ${clockHMS(total)}` : "";
 }
 
 for (const n of document.querySelectorAll('input[name="rmode"]')) n.onchange = updateRange;
