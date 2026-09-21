@@ -121,6 +121,47 @@ prevents identity switching is still there and still tested -- but it is not
 the supported path, and Auto Max no longer spends its scoring budget on
 "which person should I swap?" when there is only ever one.
 
+### Long videos, and picking a range
+
+**There is no duration limit and no file-size limit.** None is imposed in the
+code, and none is added. An hour-long, multi-gigabyte video is a supported
+input; it is simply a long job.
+
+The only hard refusal is a measured one:
+
+    insufficient disk space: this render needs roughly 19.4 GB of temporary
+    and output space, but only 11.2 GB is free.
+
+Everything else is reported rather than blocked. `POST /api/estimate` returns
+frame count, a wall-clock estimate and disk headroom before you commit.
+
+**Picking a range.** When you choose a video the browser reads its duration
+and resolution from the *local file*, before uploading a byte — so on a 5 GB
+source you can select minutes 35–42 up front instead of waiting out an upload
+to discover you only wanted seven minutes. The renderer then decodes only that
+window (`-ss` before `-i`, so seeking an hour-long file costs seconds), and
+trims the audio to exactly the same window.
+
+**Checkpoints.** Anything over three minutes is rendered in ~90-second
+segments. Each completed segment is recorded in a manifest fingerprinted by
+source, target and settings. If the machine reboots at frame 100,000, re-running
+the job skips everything already done and resumes at the segment that was in
+flight — a crash costs at most ninety seconds of work, not seven hours.
+Segments are joined by stream copy, so splitting the work costs no quality.
+Changing the source photo, the target or the pipeline invalidates the manifest
+rather than silently mixing two different renders into one file.
+
+Rough guide at the speeds this measures (~180–270 ms/frame at 1080p,
+~660 ms/frame at 4K):
+
+| Source | Approx. render time |
+|---|---|
+| 1 h @ 30 fps, 1080p | 5–8 h |
+| 1 h @ 60 fps, 1080p | 11–16 h |
+| 1 h @ 30 fps, 4K | ~20 h |
+
+Which is exactly why the range picker and the checkpoints exist.
+
 ### Quality modes
 
 | Mode | What it does |
