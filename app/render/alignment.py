@@ -214,13 +214,38 @@ def pose_3d(kps: np.ndarray, image_shape: Optional[tuple] = None
         yaw = float(np.degrees(np.arctan2(-rmat[2, 0], sy)))
         pitch = float(np.degrees(np.arctan2(rmat[2, 1], rmat[2, 2])))
         roll = float(np.degrees(np.arctan2(rmat[1, 0], rmat[0, 0])))
-        # Wrap into a sane range; solvePnP can return the mirrored branch.
-        if abs(roll) > 90.0:
-            roll = roll - 180.0 * np.sign(roll)
+
+        # Unwrap pitch and roll to a signed deviation from UPRIGHT.
+        #
+        # The canonical model's +Y is up while image +Y is down, so on real
+        # faces solvePnP routinely returns the branch near +/-180 rather than
+        # near 0. Left raw, an ordinary frontal face reports a pitch of -176
+        # degrees, which then poisons anything that bins or thresholds on it.
+        # Synthetic tests never caught this because a perfectly projected
+        # model lands on the other branch.
+        pitch = _unwrap(pitch)
+        roll = _unwrap(roll)
         return yaw, pitch, roll
     except cv2.error:
         y, r = _pose_proxy(kps)
         return y, 0.0, r
+
+
+def _unwrap(deg: float) -> float:
+    """Signed deviation from upright, in (-90, 90].
+
+    An angle near +/-180 means the same physical orientation as one near 0,
+    reached from the other side. Folding them together is what makes "is this
+    face tilted?" answerable with a threshold.
+    """
+    d = float(deg) % 360.0
+    if d > 180.0:
+        d -= 360.0
+    if d > 90.0:
+        d -= 180.0
+    elif d < -90.0:
+        d += 180.0
+    return d
 
 
 def _pose_proxy(kps: np.ndarray) -> tuple[float, float]:
