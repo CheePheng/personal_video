@@ -35,9 +35,17 @@ from app.render.types import (Face, PipelineConfig, RenderError, SourceIdentity)
 BENCH_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "benchmarks"
 CACHE_DIR = BENCH_DIR / "cache"
 
+# The mask every candidate is benchmarked under. Measured best on the A->B
+# set by a wide margin (+0.083 identity, +0.119 worst frame over "full"), and
+# stage 3 still tries the alternatives on whichever config wins.
+BENCH_MASK = "model"
+
 # Bump when the candidate matrix, the metrics or the weights change, so a
 # cached verdict from an older algorithm is never silently reused.
-ALGORITHM_VERSION = 3
+# 4: candidates benchmark under BENCH_MASK="model" instead of "full", which
+#    reorders the swapper ranking outright -- every v3 verdict was chosen
+#    from a differently-ranked matrix and must not be reused.
+ALGORITHM_VERSION = 4
 
 # Cosine below which two consecutive rendered faces are treated as different
 # people. Sampled frames are far apart in time, so genuine pose/lighting drift
@@ -142,8 +150,17 @@ def candidate_configs(available: Optional[list[str]] = None,
     # Stage 1: every installed swapper, bare. Bare isolates identity -- an
     # enhancer can mask a weak swapper, so the families must be compared
     # without one before any restoration is layered on.
+    #
+    # mask=BENCH_MASK, not "full". This used to rank swappers through the
+    # parsing+XSeg stack, which measures 0.083 identity lower because it
+    # excludes much of the face. That is not a uniform handicap: re-running
+    # the A->B tournament under "model" INVERTED the order and moved
+    # hyperswap_1a from first to last of six. Ranking under a mask that
+    # reorders the thing being ranked means the winner is chosen before the
+    # setting that would change it is ever tried -- stage 3 then offers
+    # "model" to a winner that only won because "model" was withheld.
     configs = [PipelineConfig(swapper=s, enhancer=None, enhancer_blend=0.0,
-                              mask="full", label=f"{s} bare") for s in swappers]
+                              mask=BENCH_MASK, label=f"{s} bare") for s in swappers]
     if not thorough:
         return configs
 
@@ -157,7 +174,7 @@ def candidate_configs(available: Optional[list[str]] = None,
         for blend in (0.4, 0.7):
             configs.append(PipelineConfig(
                 swapper=lead, enhancer=e, enhancer_blend=blend,
-                mask="full", label=f"{lead} + {e}@{int(blend*100)}"))
+                mask=BENCH_MASK, label=f"{lead} + {e}@{int(blend*100)}"))
     return configs
 
 
@@ -182,7 +199,7 @@ def refine_with_enhancers(winner_swapper: str, samples, identity, opts,
             if label in exclude:
                 continue
             cfg = PipelineConfig(swapper=winner_swapper, enhancer=e,
-                                 enhancer_blend=blend, mask="full", label=label)
+                                 enhancer_blend=blend, mask=BENCH_MASK, label=label)
             try:
                 out.append(score_config(cfg, samples, identity, opts))
             except RenderError as ex:
@@ -397,7 +414,7 @@ def refine_mask_and_colour(winner: dict[str, Any], samples, identity,
     out: list[dict[str, Any]] = []
 
     variants: list[tuple[str, dict[str, Any]]] = []
-    for mode in ("model", "parsing"):
+    for mode in ("model", "parsing", "full"):
         if mode != base.get("mask"):
             variants.append((f"mask:{mode}", {"mask": mode}))
     if base.get("color_match", True):

@@ -219,6 +219,42 @@ def test_composite_behaviour() -> None:
     check("missing metrics degrade gracefully", 0.0 <= ps <= 1.0, f"score={ps:.4f}")
 
 
+def test_expression_can_outvote_a_tie() -> None:
+    """A mouth-destroying candidate must not win a near-tied identity race.
+
+    This is the exact case that got through: Auto Max's top five sat within
+    0.0025 of each other and it chose a GHOST variant whose open smiles come
+    back closed and grimacing. The expression term existed and was measuring
+    it correctly -- 0.0166 against 0.0141 -- but its normalisation range
+    (0.008-0.075) put every real model in the top fifth, so a 4x difference
+    in jaw distortion compressed to almost nothing.
+    """
+    base = {
+        "identity_mean": 0.83, "identity_min": 0.74,
+        "identity_stability_mean": 0.95, "flow_flicker_mean": 6.0,
+        "mask_jitter_mean": 0.03, "seam_mean": 0.9,
+        "color_discontinuity_mean": 8.0, "sharpness_mean": 240.0,
+        "texture_retention_mean": 0.9, "ms_per_frame": 70.0,
+        "identity_switches": 0,
+    }
+    good = dict(base, expression_delta_mean=0.0141)   # alphaface, measured
+    bad = dict(base, expression_delta_mean=0.0191)    # ghost_1, measured
+    # The mouth-wrecker gets a SMALL identity edge, as GHOST really does.
+    bad["identity_mean"] = 0.8342
+    good["identity_mean"] = 0.8300
+
+    gs, _ = metrics.composite_score(good)
+    bs, _ = metrics.composite_score(bad)
+    check("expression outvotes a 0.004 identity edge", gs > bs,
+          f"good {gs:.4f} vs mouth-wrecker {bs:.4f}")
+
+    # And the term must still discriminate across the real range at all.
+    lo, _ = metrics.composite_score(dict(base, expression_delta_mean=0.011))
+    hi, _ = metrics.composite_score(dict(base, expression_delta_mean=0.021))
+    check("expression spans the real model range", lo - hi > 0.04,
+          f"0.011 -> {lo:.4f}, 0.021 -> {hi:.4f} (gap {lo - hi:.4f})")
+
+
 def test_holdout_stays_out_of_the_loop() -> None:
     """The judge must never become a selector.
 
@@ -259,6 +295,7 @@ def main() -> int:
     print("Auto Max scoring regression tests")
     test_metric_responses()
     test_composite_behaviour()
+    test_expression_can_outvote_a_tie()
     test_holdout_stays_out_of_the_loop()
     print(f"\n{'='*62}")
     print(f"  {len(PASS)} passed, {len(FAIL)} failed")

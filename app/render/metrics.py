@@ -348,7 +348,16 @@ def composite_score(m: dict) -> tuple[float, dict]:
                      + norm(m.get("mask_jitter_mean"), 0.01, 0.12, invert=True) * 0.2),
         "blending": (norm(m.get("seam_mean"), 0.55, 1.45, invert=True) * 0.6
                      + norm(m.get("color_discontinuity_mean"), 2.0, 22.0, invert=True) * 0.4),
-        "expression": norm(m.get("expression_delta_mean"), 0.008, 0.075, invert=True),
+        # Range tightened from 0.008-0.075 to what real swappers actually
+        # produce. Across every model measured on the A->B set the delta
+        # spans 0.011-0.021, which sat in the top fifth of the old range and
+        # compressed to 0.015 of weighted score -- while the top five Auto
+        # Max candidates were separated by 0.0025. A swapper that distorts
+        # jaw opening 4x more than another was therefore indistinguishable
+        # to the selector, and Auto Max duly picked a GHOST variant whose
+        # open smiles come back closed and grimacing. On 0.010-0.022 the
+        # same spread is 0.65 normalised, so the term can carry its weight.
+        "expression": norm(m.get("expression_delta_mean"), 0.010, 0.022, invert=True),
         "detail": (norm(m.get("sharpness_mean"), 60.0, 420.0) * 0.5
                    + norm(m.get("texture_retention_mean"), 0.45, 1.25) * 0.5),
         "speed": norm(m.get("ms_per_frame"), 60.0, 1400.0, invert=True),
