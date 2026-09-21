@@ -77,13 +77,29 @@ def measure(out_path: str, source_embedding: np.ndarray,
         faces = detection.detect_robust(frame, 0.4, "quality")
         if not faces:
             continue
-        face = max(faces, key=lambda f: f.area)
-        try:
-            emb = recognition.embed(frame, face.kps)
-        except Exception:  # noqa: BLE001
+
+        # Measure the SWAPPED face, not the biggest one. On a multi-person clip
+        # the largest face is often the distractor that was deliberately left
+        # alone -- scoring it reports the renderer's correct restraint as an
+        # identity failure, and makes the swap appear to jump between people.
+        best = None
+        for f in faces:
+            try:
+                e = recognition.embed(frame, f.kps)
+            except Exception:  # noqa: BLE001
+                continue
+            sim = recognition.similarity(e, source_embedding)
+            if best is None or sim > best[0]:
+                best = (sim, e, f)
+        if best is None:
+            continue
+        sim, emb, face = best
+
+        # A face that resembles nobody we swapped in is an untouched bystander.
+        if sim < 0.15:
             continue
 
-        ident.append(recognition.similarity(emb, source_embedding))
+        ident.append(sim)
         if prev_emb is not None:
             s = recognition.similarity(prev_emb, emb)
             stab.append(s)
