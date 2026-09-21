@@ -39,6 +39,10 @@ ProgressFn = Callable[[str, float, dict], None]
 
 # Stage weights for the overall bar. 'processing' dominates because it is the
 # only stage whose cost scales with video length.
+# How long the single-person fast path may coast before re-verifying
+# identity. Short enough that a wrong lock cannot persist visibly.
+EMBED_EVERY = 8
+
 STAGES = [("preparing", 0.02), ("analysing", 0.04), ("benchmarking", 0.10),
           ("processing", 0.76), ("encoding", 0.05), ("restoring audio", 0.03)]
 
@@ -145,10 +149,18 @@ class FrameRenderer:
         if self.opts.temporal:
             matrix = self.transform_smoother(matrix, face.size)
 
+        # Mask modes are genuinely different pipelines, not labels:
+        #   oval    -- geometric fallback only
+        #   model   -- the swapper's own mask (+ feathered box)
+        #   parsing -- ... + BiSeNet face parsing (hair/glasses/hat excluded)
+        #   full    -- ... + XSeg occlusion (hands and objects in front)
+        # Previously "model" and "parsing" both enabled everything, so Auto
+        # Max could not tell them apart and the option was decorative.
+        mode = self.cfg.mask
         mask, used = masking.build(
             frame, face.kps, size, model_mask=model_mask,
-            use_parsing=self.opts.use_parsing and self.cfg.mask in ("model", "parsing"),
-            use_occlusion=self.opts.use_occlusion and self.cfg.mask in ("model", "parsing"),
+            use_parsing=self.opts.use_parsing and mode in ("parsing", "full"),
+            use_occlusion=self.opts.use_occlusion and mode == "full",
             face_size=face.size)
         self.mask_sources = used
 
@@ -236,6 +248,9 @@ def render(source_paths: list[str], target_path: str, output_path: str,
     prev_frame: Optional[np.ndarray] = None
     cancelled = False
     jitters: list[float] = []
+    single_person = not opts.swap_all_faces
+    frames_since_embed = 0
+    skipped_embeds = 0
 
     try:
         for frame in video.frames(dec, info):
@@ -248,6 +263,7 @@ def render(source_paths: list[str], target_path: str, output_path: str,
             work = frame
             if prev_frame is not None and cut_detector(prev_frame, frame):
                 res.scene_cuts += 1
+                frames_since_embed = EMBED_EVERY      # force a real check
                 renderer.reset_temporal()
                 if lock:
                     lock.reset_motion()
@@ -257,14 +273,36 @@ def render(source_paths: list[str], target_path: str, output_path: str,
             faces = detection.detect_with_fallback(
                 frame, opts.detect_threshold, opts.quality,
                 opts.detector, opts.detector_fallback)
+            # Identity embedding costs ~30 ms of a ~160 ms frame. On
+            # single-person footage the common case is exactly one detection
+            # sitting where the tracker predicted, and re-deriving "is this
+            # still them?" every frame buys nothing. So we skip it on that
+            # fast path -- but only for a bounded run of frames, and never
+            # when the geometry disagrees. Anything ambiguous (more than one
+            # face, a jump, a re-acquisition) falls back to a real embedding,
+            # because the alternative is swapping the wrong thing to save
+            # 30 ms. Not used in swap_all_faces mode.
             embeds: list[Optional[np.ndarray]] = []
-            for f in faces:
-                try:
-                    e = recognition.embed(frame, f.kps)
-                except RenderError:
-                    e = None
-                f.embedding = e
-                embeds.append(e)
+            fast_path = (
+                single_person and len(faces) == 1 and lock is not None
+                and lock.locked_id is not None
+                and frames_since_embed < EMBED_EVERY
+                and lock.predicted_iou(faces[0]) >= 0.55
+            )
+            if fast_path:
+                embeds = [lock.locked_embedding]
+                faces[0].embedding = lock.locked_embedding
+                frames_since_embed += 1
+                skipped_embeds += 1
+            else:
+                for f in faces:
+                    try:
+                        e = recognition.embed(frame, f.kps)
+                    except RenderError:
+                        e = None
+                    f.embedding = e
+                    embeds.append(e)
+                frames_since_embed = 0
 
             chosen: list[Face] = []
             if opts.swap_all_faces and tracker is not None:
@@ -319,6 +357,8 @@ def render(source_paths: list[str], target_path: str, output_path: str,
         res.tracking = dict(tracker.stats)
     if jitters:
         res.tracking["mask_jitter_mean"] = round(float(np.mean(jitters)), 5)
+    if skipped_embeds:
+        res.tracking["identity_checks_skipped"] = skipped_embeds
 
     if cancelled:
         Path(tmp).unlink(missing_ok=True)

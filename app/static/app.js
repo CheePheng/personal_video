@@ -22,7 +22,7 @@ const el = {
   pick: $("pick"), quality: $("quality"), whichface: $("whichface"),
   libGrid: $("libGrid"), libEmpty: $("libEmpty"), libCount: $("libCount"),
   modal: $("modal"), modalVid: $("modalVid"), modalClose: $("modalClose"),
-  statline: $("statline"),
+  statline: $("statline"), opts: $("opts"),
 };
 
 let videoFile = null, faceFiles = [], jobId = null, polling = null, cancelled = false;
@@ -104,7 +104,9 @@ function showStage(name, pct, pill, pillCls) {
 }
 function toPanel(which) {
   for (const p of ["pick", "prog", "result", "failed"]) el[p].classList.add("hide");
-  document.querySelectorAll(".card")[1].classList.toggle("hide", which !== "pick");
+  // Address the options card by id. It used to be querySelectorAll(".card")[1],
+  // which silently binds to whatever card happens to sit second in the markup.
+  el.opts.classList.toggle("hide", which !== "pick");
   el[which].classList.remove("hide");
   if (which === "pick") el.pick.classList.remove("hide");
 }

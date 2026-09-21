@@ -214,6 +214,24 @@ class TargetLock:
     def reset_motion(self) -> None:
         self.tracker.reset_motion()
 
+    def predicted_iou(self, face: Face) -> float:
+        """Overlap between a detection and where the locked track should be.
+
+        Used by the single-person fast path to decide whether a detection is
+        obviously the same person continuing, or something that warrants a
+        real identity check.
+        """
+        trk = next((t for t in self.tracker.tracks
+                    if t.track_id == self.locked_id), None)
+        if trk is None:
+            return 0.0
+        pred = trk.predict()
+        hw = (trk.box[2] - trk.box[0]) / 2
+        hh = (trk.box[3] - trk.box[1]) / 2
+        pbox = np.array([pred[0] - hw, pred[1] - hh,
+                         pred[0] + hw, pred[1] + hh], np.float32)
+        return _iou(pbox, face.box)
+
     def select(self, faces: list[Face], embeddings: list[Optional[np.ndarray]]
                ) -> Optional[Face]:
         assigned = self.tracker.update(faces, embeddings)

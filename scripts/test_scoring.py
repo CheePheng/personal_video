@@ -40,7 +40,8 @@ def check(name: str, ok: bool, note: str = "") -> None:
 def _good() -> dict:
     """A plausibly excellent candidate."""
     return {
-        "identity_mean": 0.62, "identity_stability_mean": 0.985,
+        "identity_mean": 0.62, "identity_min": 0.58,
+        "identity_stability_mean": 0.985,
         "identity_switches": 0, "flow_flicker_mean": 3.0,
         "mask_jitter_mean": 0.02, "seam_mean": 0.65,
         "color_discontinuity_mean": 4.0, "expression_delta_mean": 0.012,
@@ -139,6 +140,7 @@ def test_composite_behaviour() -> None:
 
     worse_values = {
         "identity": ("identity_mean", 0.22),
+        "identity_worst": ("identity_min", 0.26),
         "identity_switches": ("identity_switches", 4),
         "temporal": ("identity_stability_mean", 0.80),
         "blending": ("seam_mean", 1.45),
@@ -160,13 +162,33 @@ def test_composite_behaviour() -> None:
     total = sum(metrics.WEIGHTS.values())
     check("weights sum to 1.0", abs(total - 1.0) < 1e-9, f"sum={total}")
 
-    # Identity must dominate: it and switching together outweigh everything.
-    top = metrics.WEIGHTS["identity"] + metrics.WEIGHTS["identity_switches"]
-    check("identity + switching outweigh all other terms", top > 0.5, f"{top:.2f}")
-    check("identity is the single largest weight",
+    # Single-person weighting: the two identity terms must dominate together,
+    # identity_mean must still be the single largest, and multi-person switch
+    # detection must be demoted to a defensive minimum.
+    ident_total = metrics.WEIGHTS["identity"] + metrics.WEIGHTS["identity_worst"]
+    check("identity mean + worst-case are the dominant pair", ident_total >= 0.40,
+          f"{ident_total:.2f}")
+    check("identity mean is the single largest weight",
           metrics.WEIGHTS["identity"] == max(metrics.WEIGHTS.values()))
-    check("speed is the smallest weight",
-          metrics.WEIGHTS["speed"] == min(metrics.WEIGHTS.values()))
+    check("identity_switches demoted for single-person use",
+          metrics.WEIGHTS["identity_switches"] <= 0.03,
+          f"{metrics.WEIGHTS['identity_switches']:.2f}")
+    check("identity_switches retained as a defensive guard, not deleted",
+          metrics.WEIGHTS["identity_switches"] > 0.0)
+    check("speed is among the smallest weights",
+          metrics.WEIGHTS["speed"] <= 0.03)
+    # A quality term must never be outranked by speed.
+    for q in ("identity", "identity_worst", "temporal", "expression", "blending", "detail"):
+        check(f"{q:16} outranks speed", metrics.WEIGHTS[q] > metrics.WEIGHTS["speed"])
+
+    # Worst-case identity must move the score independently of the mean:
+    # two pipelines with the same average but different worst frames must
+    # not tie, or the term is decorative.
+    same_mean_good = metrics.composite_score({**base, "identity_min": 0.60})[0]
+    same_mean_bad = metrics.composite_score({**base, "identity_min": 0.30})[0]
+    check("worst-case identity separates equal-mean candidates",
+          same_mean_good - same_mean_bad > 0.02,
+          f"{same_mean_bad:.4f} -> {same_mean_good:.4f}")
 
     # A uniformly bad candidate must lose to a uniformly good one.
     bad = {k: v for k, v in base.items()}

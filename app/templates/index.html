@@ -71,6 +71,14 @@
   .statline{display:flex;flex-wrap:wrap;gap:6px;margin-top:10px}
   .statline span{font-size:11px;padding:3px 8px;border-radius:99px;border:1px solid var(--line);
           color:var(--muted);font-variant-numeric:tabular-nums}
+  details.adv{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+  details.adv summary{cursor:pointer;color:var(--muted);font-size:12.5px;
+          list-style:none;user-select:none}
+  details.adv summary::-webkit-details-marker{display:none}
+  details.adv summary::before{content:"B8  ";font-size:10px}
+  details.adv[open] summary::before{content:"BE  "}
+  details.adv > *:not(summary){margin-top:10px}
+  .advnote{color:var(--muted);font-size:11.5px;line-height:1.45}
 
   /* ---------- library ---------- */
   .lib-head{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:12px}
@@ -118,7 +126,7 @@
 <body>
 
 <h1>Face Swap</h1>
-<div class="sub">Runs locally on your RTX 5070 Ti. Nothing is uploaded to any third party.</div>
+<div class="sub">One face, one video, rendered locally on your RTX 5070 Ti. Nothing is uploaded to any third party.</div>
 
 <div class="card" id="pick">
   <div class="grid">
@@ -143,24 +151,27 @@
   </div>
 </div>
 
-<div class="card">
-  <div class="grid">
-    <div>
-      <label class="fld" for="quality">Quality</label>
-      <select id="quality">
-        <option value="auto" selected>Auto Max &mdash; recommended for final renders</option>
-        <option value="quality">Quality &mdash; faster fixed high-quality pipeline</option>
-        <option value="fast">Fast &mdash; preview</option>
-      </select>
+<div class="card" id="opts">
+  <label class="fld" for="quality">Quality</label>
+  <select id="quality">
+    <option value="auto" selected>Auto Max &mdash; best quality, recommended</option>
+    <option value="quality">Quality &mdash; faster, fixed pipeline</option>
+    <option value="fast">Fast &mdash; preview</option>
+  </select>
+
+  <details class="adv">
+    <summary>Advanced</summary>
+    <label class="fld" for="whichface">Faces to swap</label>
+    <select id="whichface">
+      <option value="reference" selected>The person in the video (recommended)</option>
+      <option value="many">Every face in frame</option>
+    </select>
+    <div class="advnote">
+      This tool is set up for one person per video. "Every face" exists for
+      unusual footage and is not the tested path.
     </div>
-    <div>
-      <label class="fld" for="whichface">Which face in the video</label>
-      <select id="whichface">
-        <option value="reference" selected>One person (most prominent)</option>
-        <option value="many">Everyone in frame</option>
-      </select>
-    </div>
-  </div>
+  </details>
+
   <div style="margin-top:14px">
     <button id="go" disabled>Swap face</button>
   </div>

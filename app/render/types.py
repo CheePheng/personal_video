@@ -119,7 +119,7 @@ class PipelineConfig:
     swapper: str
     enhancer: Optional[str] = None
     enhancer_blend: float = 0.0
-    mask: str = "model"                  # model | parsing | oval
+    mask: str = "full"                   # oval | model | parsing | full
     pixel_boost: int = 0
     color_match: bool = True
     label: str = ""

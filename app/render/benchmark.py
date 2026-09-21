@@ -143,7 +143,7 @@ def candidate_configs(available: Optional[list[str]] = None,
     # enhancer can mask a weak swapper, so the families must be compared
     # without one before any restoration is layered on.
     configs = [PipelineConfig(swapper=s, enhancer=None, enhancer_blend=0.0,
-                              mask="model", label=f"{s} bare") for s in swappers]
+                              mask="full", label=f"{s} bare") for s in swappers]
     if not thorough:
         return configs
 
@@ -157,7 +157,7 @@ def candidate_configs(available: Optional[list[str]] = None,
         for blend in (0.4, 0.7):
             configs.append(PipelineConfig(
                 swapper=lead, enhancer=e, enhancer_blend=blend,
-                mask="model", label=f"{lead} + {e}@{int(blend*100)}"))
+                mask="full", label=f"{lead} + {e}@{int(blend*100)}"))
     return configs
 
 
@@ -182,7 +182,7 @@ def refine_with_enhancers(winner_swapper: str, samples, identity, opts,
             if label in exclude:
                 continue
             cfg = PipelineConfig(swapper=winner_swapper, enhancer=e,
-                                 enhancer_blend=blend, mask="model", label=label)
+                                 enhancer_blend=blend, mask="full", label=label)
             try:
                 out.append(score_config(cfg, samples, identity, opts))
             except RenderError as ex:
@@ -384,6 +384,37 @@ def save_cached(key: str, report: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------- driver
+def refine_mask_and_colour(winner: dict[str, Any], samples, identity,
+                           opts: RenderOptions) -> list[dict[str, Any]]:
+    """Third pass: does a different mask or colour setting beat the winner?
+
+    Run only on the configuration that has already won, because masking and
+    colour are refinements of a good swap -- trying them against every
+    swapper would multiply the matrix for combinations that cannot win on
+    identity anyway.
+    """
+    base = dict(winner["config"])
+    out: list[dict[str, Any]] = []
+
+    variants: list[tuple[str, dict[str, Any]]] = []
+    for mode in ("model", "parsing"):
+        if mode != base.get("mask"):
+            variants.append((f"mask:{mode}", {"mask": mode}))
+    if base.get("color_match", True):
+        variants.append(("no colour match", {"color_match": False}))
+
+    for suffix, override in variants:
+        cfg_dict = {**base, **override}
+        cfg_dict["label"] = f"{winner['label']} / {suffix}"
+        cfg = PipelineConfig(**cfg_dict)
+        try:
+            out.append(score_config(cfg, samples, identity, opts))
+        except RenderError as e:
+            out.append({"config": cfg_dict, "label": cfg_dict["label"],
+                        "error": str(e)[:300], "score": -1.0})
+    return out
+
+
 def run(target_path: str, identity: SourceIdentity, opts: RenderOptions,
         job_id: str, on_progress: Optional[Callable[[str, float, dict], None]] = None,
         thorough: bool = True, use_cache: bool = True
@@ -459,6 +490,13 @@ def run(target_path: str, identity: SourceIdentity, opts: RenderOptions,
                 exclude={r.get("label") for r in results})
             results.extend(extra)
             ok = [r for r in results if r.get("score", -1) >= 0]
+
+    # Stage 3: mask and colour variants on whatever is currently winning.
+    if thorough and ok:
+        lead = max(ok, key=lambda r: r["score"])
+        emit("testing masks", 88.0, candidate=f"variants of {lead['label']}")
+        results.extend(refine_mask_and_colour(lead, samples, identity, opts))
+        ok = [r for r in results if r.get("score", -1) >= 0]
 
     emit("selecting best pipeline", 90.0)
 

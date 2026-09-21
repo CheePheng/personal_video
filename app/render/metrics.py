@@ -255,15 +255,29 @@ class SceneCutDetector:
 
 
 # ---------------------------------------------------------------- selection
-# Priority order from the brief: identity first, speed last.
+# Weighted for the SINGLE-PERSON use case: one source identity, one person in
+# the target video. "Which person should I swap?" is trivial here, so the
+# score is spent almost entirely on "how good does this one face look?".
+#
+# identity_switches drops from 0.18 to 0.02. It is kept, not deleted, because
+# a collapse to zero would remove the only guard against a detector rescue or
+# a reflection pulling the swap onto something that is not the subject -- but
+# on single-person footage it should almost never fire, and 18% of the score
+# riding on a term that is constant is exactly the dead-weight problem we hit
+# before.
+#
+# identity_worst is NEW and weighted heavily. A pipeline with a good mean and
+# an ugly worst frame is worse to watch than one that is merely good
+# throughout: the eye lands on the bad frames.
 WEIGHTS = {
-    "identity": 0.34,
-    "identity_switches": 0.18,
-    "temporal": 0.16,
-    "blending": 0.12,
-    "expression": 0.10,
-    "detail": 0.07,
-    "speed": 0.03,
+    "identity": 0.30,          # mean similarity to the source face
+    "identity_worst": 0.14,    # the worst frame, not just the average
+    "temporal": 0.18,          # frame-to-frame stability / flicker
+    "expression": 0.13,        # the target keeps their own performance
+    "blending": 0.13,          # seam + colour continuity (incl. occlusion)
+    "detail": 0.08,            # sharpness / texture
+    "identity_switches": 0.02, # defensive only on single-person footage
+    "speed": 0.02,
 }
 
 
@@ -280,6 +294,10 @@ def composite_score(m: dict) -> tuple[float, dict]:
         return 1.0 - x if invert else x
 
     parts = {
+        # identity_min falls back to the mean when a run recorded only one
+        # frame, so a short benchmark is not silently penalised.
+        "identity_worst": norm(
+            m.get("identity_min", m.get("identity_mean")), 0.25, 0.93),
         # Identity range must span what the CURRENT models actually produce,
         # or the highest-weighted term silently stops discriminating.
         # The original 0.20-0.65 was calibrated before the swapper set grew:

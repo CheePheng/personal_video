@@ -40,7 +40,8 @@ STAGE_WEIGHTS: list[tuple[str, float]] = [
     ("preparing", 0.02),
     ("analysing video", 0.02),
     ("benchmarking swap models", 0.05),
-    ("testing restoration", 0.04),
+    ("testing restoration", 0.03),
+    ("testing masks", 0.01),
     ("selecting best pipeline", 0.01),
     ("detecting", 0.01),
     ("processing", 0.80),
@@ -252,7 +253,7 @@ class JobRunner(threading.Thread):
         else:
             opts.config = PipelineConfig(swapper="hyperswap_1a_256",
                                          enhancer="gpen_bfr_512", enhancer_blend=0.7,
-                                         mask="model")
+                                         mask="full")
 
         res = pipeline.render(self.sources, self.target, self.output, opts,
                               self._on_progress, lambda: self.cancelled, identity)

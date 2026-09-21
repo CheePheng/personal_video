@@ -60,7 +60,7 @@ def render_v2(source: str, target: str, out: str) -> dict[str, Any]:
     from app.render.types import PipelineConfig
     opts = pipeline.RenderOptions(quality="quality")
     opts.config = PipelineConfig(swapper="hyperswap_1a_256", enhancer="gpen_bfr_512",
-                                 enhancer_blend=0.7, mask="model")
+                                 enhancer_blend=0.7, mask="full")
     t0 = time.time()
     res = pipeline.render([source], target, out, opts)
     d = res.as_dict()

@@ -70,9 +70,9 @@ def run_clip(name: str, quality: str = "quality",
     if quality == "quality":
         opts.config = PipelineConfig(swapper="hyperswap_1a_256",
                                      enhancer="gpen_bfr_512", enhancer_blend=0.7,
-                                     mask="model")
+                                     mask="full")
     else:
-        opts.config = PipelineConfig(swapper="hyperswap_1a_256", mask="model")
+        opts.config = PipelineConfig(swapper="hyperswap_1a_256", mask="full")
 
     rec: dict[str, Any] = {"clip": name, "quality": quality}
     t0 = time.time()
