@@ -264,11 +264,39 @@ def finalize(silent_video: str, original: str, out_path: str,
         if start and start > 0:
             audio_in = ["-ss", f"{start:.6f}"] + audio_in
         if duration and duration > 0:
-            audio_in += ["-t", f"{duration:.6f}"]
+            # Trim the audio to the RENDERED video's length, not the length
+            # that was requested. A 6.000s request yields 144 frames, and 144
+            # frames at 23.839 fps is 6.041s -- so "-t 6.0" makes the audio
+            # SHORTER than the video, and -shortest then truncates the video
+            # to match, discarding 22 frames. Measured: concat produced 144,
+            # the final file had 122.
+            #
+            # The rendered frame count is authoritative; the audio follows it.
+            vid_len = duration
+            try:
+                probed = probe(str(silent_video))
+                if probed.total_frames > 0 and probed.fps > 0:
+                    vid_len = max(duration, probed.total_frames / probed.fps)
+            except (RenderError, OSError, ValueError):
+                pass
+            # A small margin so rounding can never leave audio a hair short.
+            audio_in += ["-t", f"{vid_len + 0.05:.6f}"]
+        # NOT -shortest. The rendered video is authoritative: it contains
+        # exactly the frames we decoded and swapped. On a VFR source the
+        # encoded CFR video is very slightly LONGER than the original audio
+        # (580 frames at the average 23.839 fps is 24.330s against 24.163s
+        # of audio), and -shortest resolves that by truncating the VIDEO --
+        # silently discarding the last 4 rendered frames. Measured: mux was
+        # the only lossy stage in the whole pipeline, 580 -> 576.
+        #
+        # -apad pads the audio with silence instead, and the video stream
+        # decides the length, so every rendered frame survives. The padding
+        # is bounded by the video, so it cannot run away.
         cmd = [FFMPEG, "-v", "error", "-nostdin", "-y",
                "-i", str(silent_video), *audio_in,
                "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", *acodec,
-               "-shortest", "-movflags", "+faststart", str(out_path)]
+               "-apad", "-shortest", "-shortest_buf_duration", "10",
+               "-movflags", "+faststart", str(out_path)]
         r = subprocess.run(cmd, capture_output=True, timeout=3600)
         if r.returncode == 0 and Path(out_path).exists():
             result["audio"] = "copied" if copyable else "re-encoded aac"

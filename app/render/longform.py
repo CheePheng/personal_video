@@ -268,7 +268,8 @@ def render_long(source_paths: list[str], target_path: str, output_path: str,
         # the end from the original, which keeps A/V sync exact and avoids
         # concatenating many small audio fragments.
         r = pipeline.render(source_paths, target_path, str(part), seg_opts,
-                            seg_progress, should_cancel, identity)
+                            seg_progress, should_cancel, identity,
+                            mux_audio=False)
 
         manifest.record(i, part, r.frames, time.time() - seg_t)
         parts.append(str(part))

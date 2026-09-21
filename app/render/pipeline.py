@@ -313,8 +313,17 @@ class FrameRenderer:
 def render(source_paths: list[str], target_path: str, output_path: str,
            opts: RenderOptions, on_progress: Optional[ProgressFn] = None,
            should_cancel: Optional[Callable[[], bool]] = None,
-           identity: Optional[SourceIdentity] = None) -> RenderResult:
-    """Render a whole video. The only entry point the job layer needs."""
+           identity: Optional[SourceIdentity] = None,
+           mux_audio: bool = True) -> RenderResult:
+    """Render a whole video. The only entry point the job layer needs.
+
+    ``mux_audio=False`` leaves the output silent and skips the faststart
+    rewrite. The segmented long-form renderer needs that: its comment always
+    said "segments are rendered WITHOUT audio; the soundtrack is muxed once
+    at the end", but render() muxed unconditionally, so every segment DID
+    get audio. Concatenating those left the joined stream with a 1.0s
+    start_time, and the final mux then truncated 144 frames to 125.
+    """
     t_start = time.time()
     res = RenderResult()
 
@@ -519,11 +528,17 @@ def render(source_paths: list[str], target_path: str, output_path: str,
     emit("encoding", 99.0, frames=done, total=total or done)
     t_render = time.time()
 
-    emit("restoring audio", 99.5)
-    res.video.update(video.finalize(
-        tmp, target_path, output_path, info,
-        start=start if ranged else None,
-        duration=span if ranged else None))
+    if mux_audio:
+        emit("restoring audio", 99.5)
+        res.video.update(video.finalize(
+            tmp, target_path, output_path, info,
+            start=start if ranged else None,
+            duration=span if ranged else None))
+    else:
+        # Caller owns the audio. Hand back the raw encoded stream untouched
+        # so no timestamp rewriting happens before the segments are joined.
+        Path(tmp).replace(output_path)
+        res.video["audio"] = "deferred to caller"
 
     res.timings = {
         "prepare_s": round(t_prep - t_start, 2),
