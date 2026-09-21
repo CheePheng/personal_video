@@ -114,12 +114,39 @@ Progress is `frames_done / total_frames` -- a real count, not an estimate.
 
 | Mode | What it does |
 |---|---|
+| **Auto Max** | **Recommended.** Samples the hard frames of *your* video, benchmarks all nine swappers and every restoration blend on them, and picks the winner by measurement. |
+| **Quality** | Fixed high-quality pipeline. Faster, no benchmarking step. |
 | **Fast** | One model, no parsing/occlusion masks, no restoration. For previews. |
-| **Quality** | Full masks, colour match, temporal smoothing, GPEN restoration. Default. |
-| **Auto Max** | Samples the hard frames of *your* video, benchmarks every model and restoration blend on them, and picks the winner by measurement. |
+
+Auto Max is the default because a fixed preset genuinely loses sometimes. On a
+dark test clip the fixed Quality preset scored 0.783 identity -- *worse* than
+the old V1 engine's 0.825 -- while Auto Max changed pipeline and reached
+**0.906**. No single model is best for every video, which is the whole reason
+the competition is run per render.
+
+Results are cached: the key covers the video, the fused identity, every
+installed model's SHA256 and the scoring algorithm version, so re-rendering
+the same job reuses the verdict (~4 min cold, instant warm) while changing a
+model or a metric invalidates it.
 
 Auto Max writes its full report to `data/benchmarks/<job-id>.json`, and the
 library records exactly which pipeline won.
+
+### Measured decisions
+
+Two features were built, benchmarked, and then switched off because the
+numbers did not support them:
+
+| Feature | Measurement | Decision |
+|---|---|---|
+| **Pixel boost** (512/768/1024) | Identity fell at every level (0.978 -> 0.959 on a 212 px face); sharpness moved under 2%; render time rose | **Disabled.** Code retained, option withdrawn. |
+| **TensorRT** | Provider is listed by onnxruntime but `nvinfer_10.dll` is absent, so sessions silently fall back to CUDA | **Not evaluated.** Reported as such rather than as a bogus 1.00x tie. |
+
+Detector choice was also settled by measurement: YOLOFace reached 1.000 recall
+at 8.2 ms against 0.829 for both SCRFD and RetinaFace, so it stays primary,
+with SCRFD wired as a recall-only fallback for frames YOLO drops. A fallback
+can rescue a missed face but never decides *who* gets swapped -- that stays
+with the identity tracker.
 
 ### Tracking
 
