@@ -20,6 +20,16 @@ from app.render.types import RenderError
 
 # 5-point templates (left eye, right eye, nose, left mouth, right mouth).
 TEMPLATES: dict[str, np.ndarray] = {
+    # The v1 template predates v2 and is what the GHOST and SimSwap families
+    # were trained against. Using v2 for them misaligns every face slightly,
+    # which reads as a subtly wrong identity rather than an obvious error.
+    "arcface_112_v1": np.array([
+        [0.35473214, 0.45658929],
+        [0.64526786, 0.45658929],
+        [0.50000000, 0.61154464],
+        [0.37913393, 0.77687500],
+        [0.62086607, 0.77687500],
+    ], dtype=np.float32),
     "arcface_112_v2": np.array([
         [0.34191607, 0.46157411],
         [0.65653393, 0.45983393],
@@ -40,6 +50,13 @@ TEMPLATES: dict[str, np.ndarray] = {
         [0.50123859, 0.61331904],
         [0.39308822, 0.72541100],
         [0.61150205, 0.72490465],
+    ], dtype=np.float32),
+    "mtcnn_512": np.array([
+        [0.36562865, 0.46733799],
+        [0.63305391, 0.46585885],
+        [0.50019127, 0.61942959],
+        [0.39032951, 0.77598822],
+        [0.61178945, 0.77476328],
     ], dtype=np.float32),
     "styleganex_384": np.array([
         [0.42353745, 0.46026396],

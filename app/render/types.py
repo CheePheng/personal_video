@@ -88,6 +88,11 @@ class ModelSpec:
     # Swapper-specific
     needs_embedding: bool = False
     embedding_normalized: bool = True    # hyperswap wants the L2-normed vector
+    # Some families (ghost/simswap/hififace) do not consume an ArcFace vector
+    # directly -- it must first pass through a small learned converter that
+    # remaps it into that family's identity space.
+    embedding_converter: Optional[str] = None
+    converter_normalize: bool = False    # L2-norm the CONVERTER's output
     outputs_mask: bool = False
     pixel_boost: tuple[int, ...] = ()
     # Runtime

@@ -88,6 +88,72 @@ SWAPPERS: dict[str, ModelSpec] = {
         needs_embedding=True, embedding_normalized=True, outputs_mask=True,
         pixel_boost=(256, 512, 768, 1024),
         notes="Sibling of 1a; benchmarked, not assumed better."),
+    "alphaface_256": ModelSpec(
+        name="alphaface_256", filename="alphaface_256.onnx", role="swapper",
+        input_size=256, template="arcface_128", normalization=Normalization.ZERO_ONE,
+        license="MIT per upstream repo (Yu et al. 2026, arXiv:2601.16429); "
+                "FaceFusion labels the weights Non-Commercial - contradiction unresolved",
+        source_url=_u("models-3.9.0", "alphaface_256.onnx"),
+        needs_embedding=True, embedding_normalized=False, outputs_mask=False,
+        notes="2026 entrant. Takes the RAW unnormalised ArcFace vector."),
+    "ghost_1_256": ModelSpec(
+        name="ghost_1_256", filename="ghost_1_256.onnx", role="swapper",
+        input_size=256, template="arcface_112_v1", normalization=Normalization.NEG_ONE_ONE,
+        license="Apache-2.0 (ai-forever GHOST); ONNX is a third-party conversion",
+        source_url=_u("models-3.0.0", "ghost_1_256.onnx"),
+        needs_embedding=True, embedding_normalized=False, outputs_mask=False,
+        embedding_converter="crossface_ghost", converter_normalize=False,
+        notes="The only genuinely permissive swapper family available."),
+    "ghost_2_256": ModelSpec(
+        name="ghost_2_256", filename="ghost_2_256.onnx", role="swapper",
+        input_size=256, template="arcface_112_v1", normalization=Normalization.NEG_ONE_ONE,
+        license="Apache-2.0 (ai-forever GHOST); ONNX is a third-party conversion",
+        source_url=_u("models-3.0.0", "ghost_2_256.onnx"),
+        needs_embedding=True, embedding_normalized=False, outputs_mask=False,
+        embedding_converter="crossface_ghost", converter_normalize=False,
+        notes="Second GHOST training run."),
+    "ghost_3_256": ModelSpec(
+        name="ghost_3_256", filename="ghost_3_256.onnx", role="swapper",
+        input_size=256, template="arcface_112_v1", normalization=Normalization.NEG_ONE_ONE,
+        license="Apache-2.0 (ai-forever GHOST); ONNX is a third-party conversion",
+        source_url=_u("models-3.0.0", "ghost_3_256.onnx"),
+        needs_embedding=True, embedding_normalized=False, outputs_mask=False,
+        embedding_converter="crossface_ghost", converter_normalize=False,
+        notes="Third GHOST training run."),
+    "simswap_256": ModelSpec(
+        name="simswap_256", filename="simswap_256.onnx", role="swapper",
+        input_size=256, template="arcface_112_v1", normalization=Normalization.IMAGENET,
+        license="CC BY-NC 4.0 (neuralchen SimSwap) - non-commercial research",
+        source_url=_u("models-3.0.0", "simswap_256.onnx"),
+        needs_embedding=True, embedding_normalized=False, outputs_mask=False,
+        embedding_converter="crossface_simswap", converter_normalize=True,
+        notes="The ONLY model here using ImageNet mean/std - classic silent-bug source."),
+    "simswap_unofficial_512": ModelSpec(
+        name="simswap_unofficial_512", filename="simswap_unofficial_512.onnx",
+        role="swapper", input_size=512, template="arcface_112_v1",
+        normalization=Normalization.ZERO_ONE,
+        license="CC BY-NC 4.0 (official neuralchen 512 beta despite the filename)",
+        source_url=_u("models-3.0.0", "simswap_unofficial_512.onnx"),
+        needs_embedding=True, embedding_normalized=False, outputs_mask=False,
+        embedding_converter="crossface_simswap", converter_normalize=True,
+        notes="Native 512px input - the only swapper above 256."),
+}
+
+# Identity-space converters. Not swappers themselves: they remap an ArcFace
+# vector into the space a given swapper family was trained against.
+CONVERTERS: dict[str, ModelSpec] = {
+    "crossface_ghost": ModelSpec(
+        name="crossface_ghost", filename="crossface_ghost.onnx", role="converter",
+        input_size=0, template="arcface_112_v2", normalization=Normalization.ZERO_ONE,
+        license="Apache-2.0 (accompanies GHOST)",
+        source_url=_u("models-3.4.0", "crossface_ghost.onnx"),
+        notes="512-d -> 512-d remap for GHOST."),
+    "crossface_simswap": ModelSpec(
+        name="crossface_simswap", filename="crossface_simswap.onnx", role="converter",
+        input_size=0, template="arcface_112_v2", normalization=Normalization.ZERO_ONE,
+        license="CC BY-NC 4.0 (accompanies SimSwap)",
+        source_url=_u("models-3.4.0", "crossface_simswap.onnx"),
+        notes="512-d -> 512-d remap for SimSwap; output is L2-normalised."),
 }
 
 # ---------------------------------------------------------------- enhancers
@@ -136,7 +202,7 @@ PARSERS: dict[str, ModelSpec] = {
 }
 
 ALL: dict[str, ModelSpec] = {
-    **DETECTORS, **RECOGNIZERS, **SWAPPERS, **ENHANCERS, **PARSERS,
+    **DETECTORS, **RECOGNIZERS, **SWAPPERS, **CONVERTERS, **ENHANCERS, **PARSERS,
 }
 
 # Models excluded on licensing/provenance grounds -- kept as data so

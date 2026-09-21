@@ -25,12 +25,21 @@ from app.render.registry import get_model
 from app.render.types import ModelSpec, Normalization, RenderError
 
 
+_IMAGENET_MEAN = np.array([0.485, 0.456, 0.406], np.float32).reshape(1, 3, 1, 1)
+_IMAGENET_STD = np.array([0.229, 0.224, 0.225], np.float32).reshape(1, 3, 1, 1)
+
+
 def _to_blob(crop: np.ndarray, norm: Normalization) -> np.ndarray:
     blob = crop[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32)
     if norm is Normalization.NEG_ONE_ONE:
         return (blob / 255.0 - 0.5) / 0.5
     if norm is Normalization.ARCFACE:
         return (blob - 127.5) / 127.5
+    if norm is Normalization.IMAGENET:
+        # simswap_256 is the only model here trained on ImageNet statistics.
+        return (blob / 255.0 - _IMAGENET_MEAN) / _IMAGENET_STD
+    if norm is Normalization.CENTRED_128:
+        return (blob - 127.5) / 128.0
     return blob / 255.0
 
 
@@ -38,6 +47,8 @@ def _from_blob(out: np.ndarray, norm: Normalization) -> np.ndarray:
     img = out[0].transpose(1, 2, 0)
     if norm in (Normalization.NEG_ONE_ONE, Normalization.ARCFACE):
         img = np.clip(img, -1, 1) * 0.5 + 0.5
+    elif norm is Normalization.IMAGENET:
+        img = img * _IMAGENET_STD[0].transpose(1, 2, 0) + _IMAGENET_MEAN[0].transpose(1, 2, 0)
     return np.clip(img, 0, 1)[:, :, ::-1] * 255.0        # -> BGR float
 
 
@@ -122,9 +133,32 @@ def swap(frame: np.ndarray, kps: np.ndarray, embedding: np.ndarray,
 
 
 def prepare_embedding(spec_name: str, identity: np.ndarray) -> np.ndarray:
-    """Shape the source identity the way a given swapper expects it."""
+    """Shape the source identity the way a given swapper expects it.
+
+    Three conventions exist among the registered families, and getting this
+    wrong produces a plausible-looking face that is simply the wrong person:
+
+      * hyperswap  -- the L2-normalised ArcFace vector
+      * alphaface  -- the RAW, unnormalised ArcFace vector
+      * ghost / simswap -- ArcFace passed through a learned 512->512 converter
+        into that family's own identity space, then optionally re-normalised
+
+    Everything is read from the ModelSpec, so a new family is a registry entry.
+    """
     spec = get_model(spec_name)
     vec = identity.reshape(1, -1).astype(np.float32)
+
+    if spec.embedding_converter:
+        conv = get_model(spec.embedding_converter)
+        sess = sessions.get(conv)
+        name = sess.get_inputs()[0].name
+        vec = sessions.run(conv, {name: vec})[0].reshape(1, -1).astype(np.float32)
+        if spec.converter_normalize:
+            n = float(np.linalg.norm(vec))
+            if n > 1e-6:
+                vec = vec / n
+        return vec
+
     if spec.embedding_normalized:
         n = float(np.linalg.norm(vec))
         if n > 1e-6:

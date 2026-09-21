@@ -70,12 +70,20 @@ def _supports_dynamic_input(spec) -> bool:
     return len(shape) == 4 and not all(isinstance(d, int) for d in shape[2:])
 
 
+# Detectors whose output is anchor-based rather than a single dense tensor.
+ANCHOR_DETECTORS = ("scrfd_2.5g", "retinaface_10g")
+
+
 def detect(frame: np.ndarray, threshold: float = 0.5,
            size: Optional[int] = None, model: str = "yoloface_8n") -> list[Face]:
-    """Detect faces in a BGR frame."""
+    """Detect faces in a BGR frame, dispatching on the detector family."""
     spec = get_model(model)
     if size is None:
         size = spec.input_size
+
+    if model in ANCHOR_DETECTORS:
+        from app.render import detectors_anchor
+        return detectors_anchor.detect(frame, threshold, size, model)
 
     canvas, scale = _letterbox(frame, size)
     blob = canvas[:, :, ::-1].transpose(2, 0, 1)[None].astype(np.float32) / 255.0
@@ -115,6 +123,26 @@ def _nms(faces: list[Face], threshold: float, iou: float = 0.4) -> list[Face]:
     if len(idx) == 0:
         return []
     return [faces[i] for i in np.array(idx).ravel()]
+
+
+def detect_with_fallback(frame: np.ndarray, threshold: float = 0.5,
+                         quality: str = "quality",
+                         primary: str = "yoloface_8n",
+                         fallback: Optional[str] = None) -> list[Face]:
+    """Try the primary detector, then a different family on a hard frame.
+
+    A second detector is a RECALL aid only. It finds faces the first one
+    missed; it never decides who the tracked person is. That stays with the
+    tracker, which matches on identity -- so a detector rescue cannot move the
+    swap onto somebody else.
+    """
+    faces = detect_robust(frame, threshold, quality, primary)
+    if faces or not fallback:
+        return faces
+    try:
+        return detect_robust(frame, max(0.25, threshold * 0.7), quality, fallback)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 def detect_robust(frame: np.ndarray, threshold: float = 0.5,
