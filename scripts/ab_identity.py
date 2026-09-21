@@ -112,11 +112,20 @@ def main() -> int:
             if not p.is_file():
                 continue
             dst = OUT / ("%s__%s.mp4" % (clip, label.replace("@", "")))
+            # Delete first. A refused render leaves the PREVIOUS run's file
+            # in place, and scoring it silently reports one variant's numbers
+            # under another variant's name -- which is exactly how a fully
+            # refused boost sweep came back with plausible-looking rows.
+            if dst.exists():
+                dst.unlink()
             opts = RenderOptions(quality="quality", config=cfg)
             try:
                 res = pipeline.render([str(SOURCE)], str(p), str(dst), opts)
             except Exception as e:  # noqa: BLE001
                 print("  %-16s %-18s FAILED %s" % (label, clip, str(e)[:60]))
+                continue
+            if not dst.is_file():
+                print("  %-16s %-18s NO OUTPUT" % (label, clip))
                 continue
             frames += int(res.frames or 0)
             s = score(dst, src_arc, src_sface)

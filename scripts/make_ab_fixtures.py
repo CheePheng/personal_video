@@ -125,11 +125,30 @@ def main() -> int:
     import scripts.make_testclips as m1
     import scripts.make_testclips2 as m2
 
+    # make_testclips._write reads the module global inside its body, so
+    # reassigning OUT is enough. make_testclips2._write takes
+    # ``out_dir: Path = OUT`` -- a default bound at import time -- so the
+    # same trick silently writes to the ORIGINAL directory instead. Wrap it
+    # and force the destination rather than relying on which module happens
+    # to read its global late.
     m1.OUT = AB
     m2.OUT = AB
+    _real_write2 = m2._write
+
+    def _write2(name, frames, w, h, audio=True, out_dir=None):
+        return _real_write2(name, frames, w, h, audio, AB)
+
+    m2._write = _write2
+
     made = {}
     made.update(m1.build(crops["b"], crops["c"]))
     made.update(m2.build_synth(crops["b"]))
+    m2._write = _real_write2
+
+    missing = [n for n in made if not (AB / (n + ".mp4")).is_file()]
+    if missing:
+        raise SystemExit("clips reported but not written to %s: %s"
+                         % (AB, ", ".join(sorted(missing))))
     for name in sorted(made):
         print("  %s" % name)
 

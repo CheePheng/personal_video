@@ -279,26 +279,28 @@ underneath no matter what the tiling does, so those runs were really scoring
 tile seams, and 768's smoother seams read as "better identity".
 
 Re-measured on the A->B set, where the source is a genuinely different person
-from the subject (8 clips, 30 samples per level):
+from the subject (8 clips, 80 samples per level):
 
 | boost | ArcFace (selector) | SFace (holdout) | ms/frame |
 |---|---|---|---|
-| **256** | **0.6566** | **0.6345** | 83.3 |
-| 768 | 0.0361 | 0.0294 | 223.0 |
-| 1024 | 0.0160 | −0.0271 | 342.7 |
+| **256** | **0.6262** (worst 0.3331) | **0.5922** (worst 0.2334) | 80.9 |
+| 768 | 0.0301 (worst −0.0956) | 0.0321 (worst −0.0727) | 219.6 |
+| 1024 | 0.0119 (worst −0.0883) | 0.0097 (worst −0.0757) | 337.8 |
 
 Two unrelated people score about 0.02 on these recognisers. So at 768 and
 above the swap is not producing a worse likeness -- it is producing none.
 Each tile receives a fragment with no global facial structure, leaving the
 identity conditioning nothing coherent to act on. Both judges agree, by a
-margin of 0.6, and the worst frame at 256 beats the best frame at 1024.
+margin of 0.56-0.61, and the worst frame at 256 beats the best frame at 1024
+by an order of magnitude.
 
 `pixel_boost=()` on every swapper. Do not re-enable it on evidence from the
 self-swap clips.
 
-Note also the honest ceiling: **0.6566, not 0.97.** Every "0.96 identity"
-figure this project used to quote was a face swapped onto itself. 0.65 is
-comfortably "same person" for ArcFace and is the real number to improve on.
+Note also the honest ceiling: **0.6262 mean, 0.3331 at the worst frame** --
+not 0.97. Every "0.96 identity" figure this project used to quote was a face
+swapped onto itself. 0.63 is comfortably "same person" for ArcFace; the worst
+frame is the number with real room to improve.
 
 The holdout judge lives in `app/render/judges.py` and is deliberately **not**
 wired into Auto Max -- a judge that participates in selection stops being a

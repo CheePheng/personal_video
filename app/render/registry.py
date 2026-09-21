@@ -91,19 +91,19 @@ RECOGNIZERS: dict[str, ModelSpec] = {
 #
 # Boost tiles a high-resolution aligned crop and runs the 256px model on each
 # tile separately. Measured on the A->B set (source A, subject B -- genuinely
-# different people), 8 clips, 30 samples per level:
+# different people), 8 clips, 80 samples per level:
 #
 #     boost   ArcFace (selector)   SFace (holdout)   ms/frame
-#      256          0.6566              0.6345          83.3
-#      768          0.0361              0.0294         223.0
-#     1024          0.0160             -0.0271         342.7
+#      256      0.6262 (worst 0.3331)   0.5922 (worst 0.2334)    80.9
+#      768      0.0301 (worst -0.0956)  0.0321 (worst -0.0727)  219.6
+#     1024      0.0119 (worst -0.0883)  0.0097 (worst -0.0757)  337.8
 #
 # 0.03 is what two unrelated people score (A vs B measures 0.0215). At 768
 # and above the swap does not produce a worse likeness, it produces none --
 # each tile sees a fragment with no global facial structure, so the identity
 # conditioning has nothing coherent to act on. It costs 2.7-4.1x more to do
-# that. Both recognisers agree, and the worst frame at 256 (0.6367) beats the
-# best frame at 1024 (0.0004).
+# that. Both recognisers agree, by a margin of 0.56-0.61, and the worst frame
+# at 256 beats the best frame at 1024 by an order of magnitude.
 #
 # Two earlier studies concluded the opposite. Both ran on the synthetic
 # suite, which pasted the SOURCE's own face into the clip -- a self-swap, so
