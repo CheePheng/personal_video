@@ -1,0 +1,280 @@
+"""Video I/O: probe, decode, encode, mux.
+
+Frames move over raw pipes as BGR24 -- no JPEG/PNG round-trip anywhere, so the
+only generation loss in the whole pipeline is the single final encode.
+
+Three things that quietly break video tools, handled explicitly here:
+
+  * **Rotation metadata.** Phone footage is often stored landscape with a 90-deg
+    display matrix. Decoding raw ignores that, so a portrait video would render
+    sideways. We read the side-data and let ffmpeg apply it on decode.
+  * **Variable frame rate.** Re-encoding VFR at a fixed rate silently drifts
+    audio out of sync over minutes. We detect VFR and hand ffmpeg the original
+    timing instead of pretending it is CFR.
+  * **Audio.** Copied rather than re-encoded when it is already browser-safe,
+    which is both lossless and faster.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterator, Optional
+
+import numpy as np
+
+from app.render.types import RenderError
+
+# Never shell=True: every argument is passed as a list element.
+FFMPEG = "ffmpeg"
+FFPROBE = "ffprobe"
+
+
+@dataclass(slots=True)
+class VideoInfo:
+    width: int
+    height: int
+    fps: float
+    duration: Optional[float]
+    total_frames: int
+    has_audio: bool
+    audio_codec: Optional[str]
+    codec: str
+    rotation: int
+    is_vfr: bool
+    pix_fmt: Optional[str]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "width": self.width, "height": self.height, "fps": self.fps,
+            "duration": self.duration, "total_frames": self.total_frames,
+            "has_audio": self.has_audio, "audio_codec": self.audio_codec,
+            "codec": self.codec, "rotation": self.rotation,
+            "is_vfr": self.is_vfr, "pix_fmt": self.pix_fmt,
+        }
+
+
+def _tools_present() -> None:
+    for tool in (FFMPEG, FFPROBE):
+        if shutil.which(tool) is None:
+            raise RenderError(
+                f"{tool} not found on PATH. Install it: winget install Gyan.FFmpeg")
+
+
+def probe(path: str) -> VideoInfo:
+    """Read geometry/timing. Raises with the real reason on unreadable media."""
+    _tools_present()
+    try:
+        r = subprocess.run(
+            [FFPROBE, "-v", "error", "-print_format", "json",
+             "-show_streams", "-show_format", str(path)],
+            capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise RenderError(f"ffprobe failed to run: {type(e).__name__}: {e}") from e
+    if r.returncode != 0:
+        raise RenderError(f"unreadable or corrupt media: {r.stderr.strip()[:300]}")
+
+    try:
+        info = json.loads(r.stdout or "{}")
+    except ValueError as e:
+        raise RenderError(f"ffprobe returned unparseable output: {e}") from e
+
+    video = next((s for s in info.get("streams", []) if s.get("codec_type") == "video"), None)
+    if not video:
+        raise RenderError("no video stream found in the target file")
+    audio = next((s for s in info.get("streams", []) if s.get("codec_type") == "audio"), None)
+
+    def rate(key: str) -> float:
+        num, _, den = (video.get(key) or "0/1").partition("/")
+        try:
+            d = float(den or 1)
+            return float(num) / d if d else 0.0
+        except (ValueError, ZeroDivisionError):
+            return 0.0
+
+    r_fps = rate("r_frame_rate")        # container's nominal rate
+    avg_fps = rate("avg_frame_rate")    # actual average over the file
+    fps = avg_fps or r_fps or 25.0
+    # A meaningful gap between nominal and average means variable timing.
+    is_vfr = bool(r_fps and avg_fps and abs(r_fps - avg_fps) / max(r_fps, 1e-6) > 0.01)
+
+    duration = None
+    for src in (video.get("duration"), info.get("format", {}).get("duration")):
+        try:
+            duration = float(src)
+            break
+        except (TypeError, ValueError):
+            continue
+
+    total = 0
+    for key in ("nb_frames", "nb_read_frames"):
+        try:
+            total = int(video.get(key) or 0)
+            if total:
+                break
+        except (TypeError, ValueError):
+            pass
+    if total <= 0 and duration:
+        total = int(round(fps * duration))
+
+    rotation = 0
+    for sd in video.get("side_data_list", []) or []:
+        if "rotation" in sd:
+            try:
+                rotation = int(float(sd["rotation"])) % 360
+            except (TypeError, ValueError):
+                pass
+    if not rotation:
+        try:
+            rotation = int(float((video.get("tags") or {}).get("rotate", 0))) % 360
+        except (TypeError, ValueError):
+            rotation = 0
+
+    w, h = int(video["width"]), int(video["height"])
+    # A 90/270 display rotation means the decoded frames come out transposed.
+    if rotation in (90, 270):
+        w, h = h, w
+
+    return VideoInfo(
+        width=w, height=h, fps=round(fps, 6), duration=duration,
+        total_frames=max(total, 0), has_audio=audio is not None,
+        audio_codec=(audio or {}).get("codec_name"),
+        codec=video.get("codec_name", "?"), rotation=rotation, is_vfr=is_vfr,
+        pix_fmt=video.get("pix_fmt"))
+
+
+def decode(path: str, info: VideoInfo) -> subprocess.Popen:
+    """Open a raw BGR24 frame pipe. ffmpeg applies rotation for us."""
+    cmd = [FFMPEG, "-v", "error", "-nostdin"]
+    # autorotate is ffmpeg's default, but state it so intent survives edits.
+    cmd += ["-i", str(path), "-f", "rawvideo", "-pix_fmt", "bgr24", "-"]
+    try:
+        return subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    except OSError as e:
+        raise RenderError(f"could not start decoder: {e}") from e
+
+
+def frames(proc: subprocess.Popen, info: VideoInfo) -> Iterator[np.ndarray]:
+    """Yield decoded frames until the stream ends."""
+    n = info.width * info.height * 3
+    stdout = proc.stdout
+    assert stdout is not None
+    while True:
+        buf = stdout.read(n)
+        if not buf or len(buf) < n:
+            break
+        yield np.frombuffer(buf, np.uint8).reshape(info.height, info.width, 3)
+
+
+def encoder_args(quality: str = "quality") -> tuple[list[str], str]:
+    """Pick an encoder, preferring NVENC but tuned for quality, not speed.
+
+    Returns (args, name). NVENC keeps the encode off the CPU while the GPU is
+    already busy with inference; p7/VBR-HQ is its quality-oriented setting, not
+    the fast default.
+    """
+    try:
+        r = subprocess.run([FFMPEG, "-hide_banner", "-encoders"],
+                           capture_output=True, text=True, timeout=30)
+        have_nvenc = "h264_nvenc" in r.stdout
+    except (OSError, subprocess.SubprocessError):
+        have_nvenc = False
+
+    if quality == "fast":
+        if have_nvenc:
+            return (["-c:v", "h264_nvenc", "-preset", "p4", "-rc", "vbr",
+                     "-cq", "25", "-b:v", "0"], "h264_nvenc/p4")
+        return (["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"], "libx264/veryfast")
+
+    if have_nvenc:
+        return (["-c:v", "h264_nvenc", "-preset", "p7", "-tune", "hq",
+                 "-rc", "vbr", "-cq", "19", "-b:v", "0",
+                 "-spatial-aq", "1", "-temporal-aq", "1", "-rc-lookahead", "32",
+                 "-bf", "3", "-profile:v", "high"], "h264_nvenc/p7-hq")
+    return (["-c:v", "libx264", "-preset", "slow", "-crf", "17",
+             "-profile:v", "high"], "libx264/slow")
+
+
+def open_encoder(out_path: str, info: VideoInfo, quality: str = "quality"
+                 ) -> tuple[subprocess.Popen, str]:
+    args, name = encoder_args(quality)
+    cmd = [
+        FFMPEG, "-v", "error", "-nostdin", "-y",
+        "-f", "rawvideo", "-pix_fmt", "bgr24",
+        "-s", f"{info.width}x{info.height}", "-r", f"{info.fps}", "-i", "-",
+        *args,
+        # yuv420p: the only chroma format every browser decodes reliably.
+        "-pix_fmt", "yuv420p", str(out_path),
+    ]
+    try:
+        return subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE), name
+    except OSError as e:
+        raise RenderError(f"could not start encoder: {e}") from e
+
+
+def finalize(silent_video: str, original: str, out_path: str,
+             info: VideoInfo) -> dict[str, Any]:
+    """Mux audio back and make the file seekable.
+
+    Audio is stream-copied when it is already AAC/MP3 -- lossless and fast.
+    +faststart moves the index to the front so a browser can seek before the
+    whole file has arrived.
+    """
+    result: dict[str, Any] = {"audio": "none", "faststart": False}
+
+    if info.has_audio:
+        copyable = (info.audio_codec or "").lower() in ("aac", "mp3")
+        acodec = ["-c:a", "copy"] if copyable else ["-c:a", "aac", "-b:a", "192k"]
+        cmd = [FFMPEG, "-v", "error", "-nostdin", "-y",
+               "-i", str(silent_video), "-i", str(original),
+               "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", *acodec,
+               "-shortest", "-movflags", "+faststart", str(out_path)]
+        r = subprocess.run(cmd, capture_output=True, timeout=3600)
+        if r.returncode == 0 and Path(out_path).exists():
+            result["audio"] = "copied" if copyable else "re-encoded aac"
+            result["faststart"] = True
+            Path(silent_video).unlink(missing_ok=True)
+            return result
+        # Audio is a bonus; never lose the render over a mux failure.
+        result["audio"] = f"mux failed: {r.stderr.decode('utf-8','replace')[:200]}"
+
+    r = subprocess.run(
+        [FFMPEG, "-v", "error", "-nostdin", "-y", "-i", str(silent_video),
+         "-c", "copy", "-movflags", "+faststart", str(out_path)],
+        capture_output=True, timeout=1800)
+    if r.returncode == 0 and Path(out_path).exists():
+        result["faststart"] = True
+        Path(silent_video).unlink(missing_ok=True)
+    else:
+        Path(silent_video).replace(out_path)
+    return result
+
+
+def sample_frames(path: str, info: VideoInfo, indices: list[int]) -> dict[int, np.ndarray]:
+    """Pull specific frames by index, for benchmarking.
+
+    One sequential decode rather than N seeks: seeking a long-GOP H.264 file
+    repeatedly is slower and can land on the wrong frame.
+    """
+    want = sorted(set(i for i in indices if i >= 0))
+    if not want:
+        return {}
+    out: dict[int, np.ndarray] = {}
+    proc = decode(path, info)
+    try:
+        target = set(want)
+        last = max(want)
+        for idx, frame in enumerate(frames(proc, info)):
+            if idx in target:
+                out[idx] = frame.copy()
+            if idx >= last:
+                break
+    finally:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+    return out
