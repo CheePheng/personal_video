@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from scripts.clean_baseline import (  # noqa: E402
-    OUT, PERF, CLIPS, banner, idle_floor, run_case)
+    OUT, PERF, CLIPS, SRC, banner, idle_floor, run_case)
 
 
 def build(case: str):
@@ -95,7 +95,26 @@ def main() -> None:
     if not clip.is_file():
         raise SystemExit("missing clip: %s" % clip)
 
+    # Measure the idle floor BEFORE anything of ours loads. Taking it after
+    # the Auto Max benchmark made the "floor" include ~11 GB of benchmark
+    # sessions, so peak-minus-floor came out as 252 MB for a phase that
+    # actually peaked at 12.3 GB.
     floor = idle_floor(3.0)
+
+    if case.startswith("automax"):
+        # Auto Max lives in the job layer, not in render(): it has to
+        # benchmark before it can name a winner. Driving it the way the app
+        # does is the only way to measure it -- passing quality='auto'
+        # straight to render() is now refused rather than silently defaulted.
+        import time as _t
+        from app.render import benchmark, pipeline as _p
+        identity = _p.load_source([str(SRC)])
+        t0 = _t.time()
+        cfg, report = benchmark.run(str(clip), identity, opts, "baseline", None)
+        bench_s = _t.time() - t0
+        opts.config = cfg
+        print("  benchmark: %.1fs -> %s" % (bench_s, cfg.describe()), flush=True)
+
     row = run_case(case, clip, opts, note)
     banner(row, floor)
     row["idle_floor_mb"] = floor

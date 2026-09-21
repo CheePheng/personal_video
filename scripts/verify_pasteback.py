@@ -91,7 +91,7 @@ def main() -> int:
         face = max(faces, key=lambda f: f.area)
 
         for boost in (0, 768):
-            patch, mm, mtx, size = swapping.swap(frame, face.kps, emb,
+            patch, mm, mtx, size, _ = swapping.swap(frame, face.kps, emb,
                                                  "hyperswap_1a_256", boost)
             mask, _ = masking.build(frame, face.kps, size, model_mask=mm,
                                     face_size=face.size)

@@ -73,7 +73,7 @@ def bench_pixel_boost(clips: Optional[list[str]] = None) -> dict[str, Any]:
             sessions.release()          # measure each level from a clean slate
             try:
                 t = time.time()
-                patch, mm, mtx, size = swapping.swap(frame, face.kps, emb,
+                patch, mm, mtx, size, _ = swapping.swap(frame, face.kps, emb,
                                                      "hyperswap_1a_256", boost)
                 ms = (time.time() - t) * 1000.0
                 mask, _ = masking.build(frame, face.kps, size, model_mask=mm,

@@ -91,12 +91,17 @@ def _run_tile(spec: ModelSpec, crop: np.ndarray,
 
 def swap(frame: np.ndarray, kps: np.ndarray, embedding: np.ndarray,
          model: str = "hyperswap_1a_256",
-         pixel_boost: int = 0) -> tuple[np.ndarray, Optional[np.ndarray], np.ndarray, int]:
+         pixel_boost: int = 0) -> tuple[np.ndarray, Optional[np.ndarray],
+                                        np.ndarray, int, np.ndarray]:
     """Swap one face.
 
-    Returns (swapped_patch, model_mask_or_None, align_matrix, working_size).
-    The patch is float BGR at ``working_size``; compositing is the caller's job
-    so masks can be combined first.
+    Returns (swapped_patch, model_mask_or_None, align_matrix, working_size,
+    aligned_target_crop). The patch is float BGR at ``working_size``;
+    compositing is the caller's job so masks can be combined first.
+
+    The aligned crop is returned rather than discarded because the colour
+    matcher needs exactly this image -- same frame, same landmarks, same
+    template, same size -- and was re-warping it from scratch every frame.
     """
     spec = get_model(model)
     if not spec.needs_embedding:
@@ -123,7 +128,7 @@ def swap(frame: np.ndarray, kps: np.ndarray, embedding: np.ndarray,
 
     if size == base:
         face, mask = _run_tile(spec, crop, embedding)
-        return face, mask, matrix, size
+        return face, mask, matrix, size, crop
 
     # Real pixel boost: tile the high-res crop, run the model per tile.
     n = size // base
@@ -137,7 +142,7 @@ def swap(frame: np.ndarray, kps: np.ndarray, embedding: np.ndarray,
             face[y:y + base, x:x + base] = t_face
             if mask is not None and t_mask is not None:
                 mask[y:y + base, x:x + base] = t_mask
-    return face, mask, matrix, size
+    return face, mask, matrix, size, crop
 
 
 def prepare_embedding(spec_name: str, identity: np.ndarray) -> np.ndarray:

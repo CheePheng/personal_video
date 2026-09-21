@@ -219,10 +219,47 @@ def test_composite_behaviour() -> None:
     check("missing metrics degrade gracefully", 0.0 <= ps <= 1.0, f"score={ps:.4f}")
 
 
+def test_holdout_stays_out_of_the_loop() -> None:
+    """The judge must never become a selector.
+
+    ArcFace is inside the optimisation loop: the swap is conditioned on it and
+    Auto Max ranks on it. SFace exists to check that loop from outside. The
+    moment it is also used for selection it stops being independent evidence
+    and starts being another thing the pipeline is fitted to -- and nothing
+    would visibly break, which is why this is asserted rather than assumed.
+    """
+    import ast
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parent.parent
+    for mod in ("benchmark.py", "metrics.py", "pipeline.py", "swapping.py"):
+        p = root / "app" / "render" / mod
+        if not p.is_file():
+            continue
+        tree = ast.parse(p.read_text(encoding="utf-8"))
+        names: set[str] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names.update(a.name for a in node.names)
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    names.add(node.module)
+                names.update(a.name for a in node.names)
+        check(f"{mod} does not import the holdout judge",
+              not any("judges" in n for n in names),
+              f"imports={sorted(n for n in names if 'judge' in n)}")
+
+    # And the selector weights must not contain a judge-derived term.
+    check("composite weights contain no holdout term",
+          not any("sface" in k or "judge" in k for k in metrics.WEIGHTS),
+          f"weights={sorted(metrics.WEIGHTS)}")
+
+
 def main() -> int:
     print("Auto Max scoring regression tests")
     test_metric_responses()
     test_composite_behaviour()
+    test_holdout_stays_out_of_the_loop()
     print(f"\n{'='*62}")
     print(f"  {len(PASS)} passed, {len(FAIL)} failed")
     if FAIL:

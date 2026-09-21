@@ -100,7 +100,11 @@ def install() -> None:
     _wrap(color, "estimate", "colour_estimate")
     _wrap(color, "apply", "colour_apply")
     _wrap(alignment, "paste_back", "paste")
-    _wrap(alignment, "warp", "warp")
+    # warp is called from INSIDE swapping.swap and masking.build, so its time
+    # already sits in those buckets. Counting it again made "unattributed"
+    # negative (-1.9 ms/frame), which was the tell that something was being
+    # double counted.
+    _wrap(alignment, "warp", "  .warp(all, nested)", nested=True)
     _wrap(restoration, "restore", "restore")
 
     # Scene-cut detection is a per-frame CPU histogram pass.

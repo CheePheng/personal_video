@@ -38,6 +38,13 @@ from app.render.types import Normalization, RenderError
 FACE_CLASSES = (1, 2, 3, 4, 5, 10, 11, 12, 13)          # the swappable face
 OCCLUDER_CLASSES = (6, 9, 15, 16, 17, 18)               # in front of / not face
 
+# CelebAMask-HQ has 19 classes, so membership is a table lookup.
+_N_CLASSES = 19
+_FACE_LUT = np.zeros(_N_CLASSES, np.float32)
+_FACE_LUT[list(FACE_CLASSES)] = 1.0
+_OCCLUDER_LUT = np.zeros(_N_CLASSES, np.float32)
+_OCCLUDER_LUT[list(OCCLUDER_CLASSES)] = 1.0
+
 
 # BiSeNet was trained with ImageNet statistics, not the [-1,1] convention the
 # swappers use. Feeding it the wrong normalisation yields a plausible-looking
@@ -97,10 +104,11 @@ def parsing_masks(frame: np.ndarray, kps: np.ndarray,
     crop, _ = alignment.warp(frame, kps, spec.template, spec.input_size)
     out = sessions.run(spec, {"input": _prep_parser(crop, spec)})[0]
 
-    labels = np.argmax(out[0], axis=0).astype(np.int32)
-    face = np.isin(labels, FACE_CLASSES).astype(np.float32)
-    occl = np.isin(labels, OCCLUDER_CLASSES).astype(np.float32)
-    return face, occl
+    labels = np.argmax(out[0], axis=0)
+    # Lookup rather than np.isin: labels are dense small integers, so a
+    # 19-entry table indexed by label is exactly equivalent and avoids
+    # np.isin's sort-and-search over a quarter of a million pixels, twice.
+    return _FACE_LUT[labels], _OCCLUDER_LUT[labels]
 
 
 def occlusion_mask(frame: np.ndarray, kps: np.ndarray,

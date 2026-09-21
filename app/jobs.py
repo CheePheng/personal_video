@@ -236,7 +236,7 @@ class JobRunner(threading.Thread):
     # ------------------------------------------------------------- engines
     def _run_v2(self) -> dict[str, Any]:
         from app.render import benchmark, longform, pipeline
-        from app.render.types import PipelineConfig
+
 
         quality = self.opts.get("quality", "quality")
         opts = pipeline.RenderOptions(
@@ -253,16 +253,10 @@ class JobRunner(threading.Thread):
             cfg, bench_report = benchmark.run(
                 self.target, identity, opts, self.jid, self._on_progress)
             opts.config = cfg
-        elif quality == "fast":
-            # Preview mode: one proven model, no parsing/occlusion/colour work.
-            opts.config = PipelineConfig(swapper="hyperswap_1a_256", enhancer=None,
-                                         mask="model", color_match=False)
-            opts.use_parsing = False
-            opts.use_occlusion = False
         else:
-            opts.config = PipelineConfig(swapper="hyperswap_1a_256",
-                                         enhancer="gpen_bfr_512", enhancer_blend=0.7,
-                                         mask="full")
+            # The presets themselves live in pipeline.apply_preset, so a
+            # benchmark harness measures the same thing this ships.
+            pipeline.apply_preset(opts)
 
         # render_long segments and checkpoints anything over a few minutes and
         # falls straight through to pipeline.render for short clips, so an

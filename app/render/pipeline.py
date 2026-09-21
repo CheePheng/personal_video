@@ -72,6 +72,43 @@ class RenderOptions:
     end_time: Optional[float] = None
 
 
+def apply_preset(opts: "RenderOptions") -> "RenderOptions":
+    """Resolve ``opts.quality`` into the actual pipeline it names.
+
+    Single source of truth, because there was not one. The job layer built
+    the real presets itself and ``render()`` fell back to a bare
+    ``PipelineConfig(swapper="hyperswap_1a_256")`` whenever no config was
+    passed -- no enhancer, where the shipping Quality preset runs GPEN BFR
+    512 at 70%. Any harness calling ``render()`` directly therefore measured
+    a pipeline no user ever runs, and reported it as "Quality".
+
+    ``auto`` is refused rather than defaulted. Auto Max has to benchmark
+    before it can name a winner, and silently rendering the default instead
+    looks exactly like a successful Auto Max run while reporting the wrong
+    configuration -- which is how two "Auto Max" timings came back identical
+    to each other and to the default.
+    """
+    if opts.config is not None:
+        return opts
+    if opts.quality == "auto":
+        raise RenderError(
+            "quality='auto' needs Auto Max to pick a pipeline first: call "
+            "benchmark.run() and pass the winner as RenderOptions.config. "
+            "render() will not substitute a default, because that would "
+            "report a default render as an Auto Max result.")
+    if opts.quality == "fast":
+        # Preview: one proven model, no parsing/occlusion/colour work.
+        opts.config = PipelineConfig(swapper="hyperswap_1a_256", enhancer=None,
+                                     mask="model", color_match=False)
+        opts.use_parsing = False
+        opts.use_occlusion = False
+    else:
+        opts.config = PipelineConfig(swapper="hyperswap_1a_256",
+                                     enhancer="gpen_bfr_512",
+                                     enhancer_blend=0.7, mask="full")
+    return opts
+
+
 @dataclass
 class RenderResult:
     frames: int = 0
@@ -148,7 +185,7 @@ class FrameRenderer:
 
     def render_face(self, frame: np.ndarray, face: Face) -> tuple[np.ndarray, np.ndarray]:
         """Swap one face into ``frame``. Returns (frame, full-frame mask)."""
-        patch, model_mask, matrix, size = swapping.swap(
+        patch, model_mask, matrix, size, target_crop = swapping.swap(
             frame, face.kps, self.embedding, self.cfg.swapper, self.cfg.pixel_boost)
 
         if self.opts.temporal:
@@ -174,9 +211,9 @@ class FrameRenderer:
             mask = self.mask_smoother(mask)
 
         if self.cfg.color_match and self.opts.color_match:
-            target_crop, _ = alignment.warp(
-                frame, face.kps,
-                get_model(self.cfg.swapper).template, size)
+            # target_crop comes back from swapping.swap(), which had to warp
+            # it anyway; re-deriving it here cost a second full LANCZOS4 warp
+            # per frame for a byte-identical result.
             # Measure, smooth, then apply ONCE. This used to apply the raw
             # correction and then apply the smoothed correction on top of the
             # already-corrected patch -- a double colour push that both cost
@@ -237,7 +274,8 @@ def render(source_paths: list[str], target_path: str, output_path: str,
         identity = load_source(source_paths)
     t_prep = time.time()
 
-    cfg = opts.config or PipelineConfig(swapper="hyperswap_1a_256")
+    cfg = apply_preset(opts).config
+    assert cfg is not None
     res.config = cfg
 
     # Verify CUDA really bound before committing to a long render.
@@ -352,7 +390,10 @@ def render(source_paths: list[str], target_path: str, output_path: str,
                     pass
 
             try:
-                enc.stdin.write(np.ascontiguousarray(work).tobytes())
+                # memoryview, not .tobytes(): the latter copies the whole
+                # frame (24.9 MB at 4K) purely to hand the same bytes to a
+                # pipe that can consume the buffer directly.
+                enc.stdin.write(memoryview(np.ascontiguousarray(work)))
             except (BrokenPipeError, OSError) as e:
                 err = enc.stderr.read().decode("utf-8", "replace")[:300] if enc.stderr else ""
                 raise RenderError(f"encoder failed: {e}. {err}") from e

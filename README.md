@@ -24,14 +24,21 @@ The link is different every time you start it. That's normal.
 
 ## How long it takes
 
-Measured with the GPU dedicated to rendering (see *Measuring VRAM honestly*
-below for why that qualifier matters):
+Measured with the GPU dedicated to rendering, on the **Balanced** preset that
+the app actually runs (HyperSwap 1a + GPEN BFR 512 at 70% + full mask):
 
-| Resolution | ms/frame | Roughly |
-|---|---|---|
-| 720p | ~83 | 12 fps |
-| 1080p | ~90 | 11 fps |
-| 4K | ~147 | 7 fps |
+| Resolution | ms/frame | Roughly | Renderer VRAM | GPU busy |
+|---|---|---|---|---|
+| 720p | ~140 | 7 fps | 4.6 GB | 43% |
+| 1080p | ~148 | 7 fps | 4.7 GB | 42% |
+| 4K | ~212 | 5 fps | 5.2 GB | 29% |
+
+Without the restoration pass (swap only) the same clips run at ~87 / ~97 /
+~151 ms/frame using 2.5–3.2 GB. Quote whichever you mean: for a while these
+numbers were measured on the swap-only path and reported as "Balanced",
+because `render()` quietly fell back to a bare config when none was passed
+while the job layer built the real one. Both now come from
+`pipeline.apply_preset()`, so there is one definition of each preset.
 
 1080p costs only a little more than 720p: most of the per-frame work happens
 on a fixed-size aligned face crop, not on the whole frame, so frame area
@@ -42,11 +49,11 @@ reconnects to it when you come back.
 
 ## Don't render while gaming
 
-Not because of memory — because of compute. The renderer itself needs only
-about **2.1 GB at 720p, 2.6 GB at 1080p and 3.4 GB at 4K**, against roughly
-14.7 GB free on an idle machine. It is nowhere near VRAM-limited. But a game
-will take the GPU's compute and power budget, and render times climb
-accordingly. Render when you're done playing.
+Not because of memory — because of compute. The renderer needs about
+**4.6 GB at 720p and 5.2 GB at 4K** on Balanced, against roughly 14.7 GB free
+on an idle machine. It is nowhere near VRAM-limited. But a game will take the
+GPU's compute and power budget, and render times climb accordingly. Render
+when you're done playing.
 
 ### Measuring VRAM honestly
 
@@ -168,17 +175,17 @@ Segments are joined by stream copy, so splitting the work costs no quality.
 Changing the source photo, the target or the pipeline invalidates the manifest
 rather than silently mixing two different renders into one file.
 
-Rough guide at the speeds this now measures on a dedicated GPU (~90 ms/frame
-at 1080p, ~147 ms/frame at 4K, default Quality pipeline without restoration):
+Rough guide at the speeds this now measures on a dedicated GPU, Balanced
+(~148 ms/frame at 1080p, ~212 ms/frame at 4K):
 
 | Source | Approx. render time |
 |---|---|
-| 1 h @ 30 fps, 1080p | ~2.7 h |
-| 1 h @ 60 fps, 1080p | ~5.4 h |
-| 1 h @ 30 fps, 4K | ~4.4 h |
+| 1 h @ 30 fps, 1080p | ~4.4 h |
+| 1 h @ 60 fps, 1080p | ~8.9 h |
+| 1 h @ 30 fps, 4K | ~6.4 h |
 
 These replace earlier figures of 5–8 h / 11–16 h / ~20 h, which were measured
-before the compositing path was fixed (see below) and on a contended GPU.
+on a contended GPU and before the compositing path was fixed.
 
 Which is exactly why the range picker and the checkpoints exist.
 
