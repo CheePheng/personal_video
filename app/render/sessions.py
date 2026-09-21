@@ -14,6 +14,7 @@ Two rules here, both learned the hard way (see docs/FINDINGS.md):
 
 from __future__ import annotations
 
+import gc
 import subprocess
 import threading
 from pathlib import Path
@@ -41,11 +42,22 @@ def _make(spec: ModelSpec, allow_cpu: bool) -> ort.InferenceSession:
     opts.log_severity_level = 3
     opts.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
 
-    providers = list(spec.providers)
-    if not allow_cpu:
-        providers = [p for p in providers if p != "CPUExecutionProvider"]
-        if not providers:
-            providers = ["CUDAExecutionProvider"]
+    # ORT's default CUDA arena strategy (kNextPowerOfTwo) doubles its
+    # allocation each time it grows and never hands the memory back while the
+    # process lives. Loading nine swappers in sequence therefore accumulates
+    # several GB of arena even after the Python sessions are released, and the
+    # benchmark ends up running with a few hundred MB free -- which is slow
+    # rather than fatal, and very hard to attribute. kSameAsRequested allocates
+    # what is actually needed.
+    cuda_opts = {"arena_extend_strategy": "kSameAsRequested"}
+    providers: list[Any] = []
+    for prov in spec.providers:
+        if prov == "CPUExecutionProvider" and not allow_cpu:
+            continue
+        providers.append(("CUDAExecutionProvider", cuda_opts)
+                         if prov == "CUDAExecutionProvider" else prov)
+    if not providers:
+        providers = [("CUDAExecutionProvider", cuda_opts)]
 
     try:
         sess = ort.InferenceSession(str(path), sess_options=opts, providers=providers)
@@ -87,12 +99,18 @@ def run(spec: ModelSpec, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
 
 
 def release(name: Optional[str] = None) -> None:
-    """Drop cached sessions to free VRAM (all, or one by name)."""
+    """Drop cached sessions to free VRAM (all, or one by name).
+
+    gc.collect() because ORT only frees device memory when the session object
+    is actually finalised; without it the session can linger in a reference
+    cycle and the VRAM stays held for an unpredictable while.
+    """
     with _lock:
         if name is None:
             _cache.clear()
         else:
             _cache.pop(name, None)
+    gc.collect()
 
 
 def loaded() -> list[str]:
