@@ -24,25 +24,42 @@ The link is different every time you start it. That's normal.
 
 ## How long it takes
 
-Measured on this machine at 720p, Balanced (swap + enhance): **~3.5 frames/sec**,
-roughly **7x the length of your video**.
+Measured with the GPU dedicated to rendering (see *Measuring VRAM honestly*
+below for why that qualifier matters):
 
-| Your video | Render time |
-|---|---|
-| 1 min | ~7 min |
-| 5 min | ~34 min |
-| 10 min | ~68 min |
+| Resolution | ms/frame | Roughly |
+|---|---|---|
+| 720p | ~83 | 12 fps |
+| 1080p | ~90 | 11 fps |
+| 4K | ~147 | 7 fps |
 
-1080p is comfortably supported but slower — budget roughly 10–12x.
+1080p costs only a little more than 720p: most of the per-frame work happens
+on a fixed-size aligned face crop, not on the whole frame, so frame area
+matters far less than you would expect.
 
 You can close the browser while it renders; the job keeps going and the page
 reconnects to it when you come back.
 
 ## Don't render while gaming
 
-A Balanced render peaks at **15.6 GB of your 16.3 GB of VRAM**. NBA 2K27 alone
-holds about 8.4 GB. They do not fit together — starting a render mid-game will
-either run out of memory or tank your framerate. Render when you're done playing.
+Not because of memory — because of compute. The renderer itself needs only
+about **2.1 GB at 720p, 2.6 GB at 1080p and 3.4 GB at 4K**, against roughly
+14.7 GB free on an idle machine. It is nowhere near VRAM-limited. But a game
+will take the GPU's compute and power budget, and render times climb
+accordingly. Render when you're done playing.
+
+### Measuring VRAM honestly
+
+This section used to claim a render "peaks at 15.6 GB of your 16.3 GB". That
+was wrong, and the way it was wrong is worth recording. The VRAM probe reads
+`nvidia-smi --query-gpu=memory.used`, which reports **the whole card** — every
+process on it. The number was captured with a game (~8.4 GB), a desktop, a
+browser and two stale copies of this app's own server (~2.2 GB between them)
+all resident, and then attributed entirely to the renderer.
+
+Anything measuring VRAM must therefore report two figures: whole-card usage,
+and usage minus the idle floor. `scripts/clean_baseline.py` does exactly that
+(`peak_card_mb` and `peak_attrib_mb`) so the two can never be confused again.
 
 ## Quality settings
 
@@ -151,14 +168,17 @@ Segments are joined by stream copy, so splitting the work costs no quality.
 Changing the source photo, the target or the pipeline invalidates the manifest
 rather than silently mixing two different renders into one file.
 
-Rough guide at the speeds this measures (~180–270 ms/frame at 1080p,
-~660 ms/frame at 4K):
+Rough guide at the speeds this now measures on a dedicated GPU (~90 ms/frame
+at 1080p, ~147 ms/frame at 4K, default Quality pipeline without restoration):
 
 | Source | Approx. render time |
 |---|---|
-| 1 h @ 30 fps, 1080p | 5–8 h |
-| 1 h @ 60 fps, 1080p | 11–16 h |
-| 1 h @ 30 fps, 4K | ~20 h |
+| 1 h @ 30 fps, 1080p | ~2.7 h |
+| 1 h @ 60 fps, 1080p | ~5.4 h |
+| 1 h @ 30 fps, 4K | ~4.4 h |
+
+These replace earlier figures of 5–8 h / 11–16 h / ~20 h, which were measured
+before the compositing path was fixed (see below) and on a contended GPU.
 
 Which is exactly why the range picker and the checkpoints exist.
 

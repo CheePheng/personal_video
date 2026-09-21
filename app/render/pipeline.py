@@ -177,10 +177,15 @@ class FrameRenderer:
             target_crop, _ = alignment.warp(
                 frame, face.kps,
                 get_model(self.cfg.swapper).template, size)
-            patch, params = color.match(patch, target_crop, mask)
+            # Measure, smooth, then apply ONCE. This used to apply the raw
+            # correction and then apply the smoothed correction on top of the
+            # already-corrected patch -- a double colour push that both cost
+            # a second LAB round-trip and drove the face further from the
+            # target's lighting than the smoothed parameters asked for.
+            params = color.estimate(patch, target_crop, mask)
             if self.opts.temporal:
-                smoothed = self.color_smoother(params)
-                patch, _ = color.match(patch, target_crop, mask, smoothed)
+                params = self.color_smoother(params)
+            patch = color.apply(patch, mask, params)
 
         out = alignment.paste_back(frame, patch, mask, matrix)
 

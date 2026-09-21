@@ -42,26 +42,39 @@ def _masked_stats(lab: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, np.nda
     return mean, np.sqrt(np.maximum(var, 1e-6))
 
 
-def match(swapped: np.ndarray, target: np.ndarray, mask: np.ndarray,
-          params: Optional[dict] = None) -> tuple[np.ndarray, dict]:
-    """Recolour ``swapped`` to sit in ``target``'s lighting, inside ``mask``.
+def _to_lab(img: np.ndarray) -> np.ndarray:
+    return cv2.cvtColor(np.clip(img, 0, 255).astype(np.uint8),
+                        cv2.COLOR_BGR2LAB).astype(np.float32)
 
-    Returns (corrected, params) where params can be fed back in (already
-    smoothed) on the next frame to keep the correction stable.
+
+def _params_from_lab(s_lab: np.ndarray, t_lab: np.ndarray,
+                     mask: np.ndarray) -> dict:
+    s_mean, s_std = _masked_stats(s_lab, mask)
+    t_mean, t_std = _masked_stats(t_lab, mask)
+    gain = np.clip(t_std / np.maximum(s_std, 1e-3), 0.6, 1.6)
+    shift = np.clip(t_mean - s_mean * gain, -MAX_SHIFT, MAX_SHIFT)
+    strength = np.array([L_STRENGTH, AB_STRENGTH, AB_STRENGTH])
+    gain = 1.0 + (gain - 1.0) * strength
+    shift = shift * strength
+    return {"gain": gain.tolist(), "shift": shift.tolist()}
+
+
+def estimate(swapped: np.ndarray, target: np.ndarray,
+             mask: np.ndarray) -> dict:
+    """Measure the correction ``swapped`` needs, WITHOUT applying it.
+
+    Separated from :func:`match` so a caller that intends to smooth the
+    parameters can do so before anything touches the pixels. Previously the
+    only way to obtain parameters was to run the full correction and discard
+    the image, which cost a wasted LAB round-trip per frame -- and, worse,
+    tempted the caller into applying the correction twice.
     """
-    s_lab = cv2.cvtColor(np.clip(swapped, 0, 255).astype(np.uint8), cv2.COLOR_BGR2LAB).astype(np.float32)
-    t_lab = cv2.cvtColor(np.clip(target, 0, 255).astype(np.uint8), cv2.COLOR_BGR2LAB).astype(np.float32)
+    return _params_from_lab(_to_lab(swapped), _to_lab(target), mask)
 
-    if params is None:
-        s_mean, s_std = _masked_stats(s_lab, mask)
-        t_mean, t_std = _masked_stats(t_lab, mask)
-        gain = np.clip(t_std / np.maximum(s_std, 1e-3), 0.6, 1.6)
-        shift = np.clip(t_mean - s_mean * gain, -MAX_SHIFT, MAX_SHIFT)
-        strength = np.array([L_STRENGTH, AB_STRENGTH, AB_STRENGTH])
-        gain = 1.0 + (gain - 1.0) * strength
-        shift = shift * strength
-        params = {"gain": gain.tolist(), "shift": shift.tolist()}
 
+def apply(swapped: np.ndarray, mask: np.ndarray, params: dict) -> np.ndarray:
+    """Apply an already-decided correction, once."""
+    s_lab = _to_lab(swapped)
     gain = np.asarray(params["gain"], np.float32)
     shift = np.asarray(params["shift"], np.float32)
     out_lab = np.clip(s_lab * gain + shift, 0, 255).astype(np.uint8)
@@ -69,7 +82,21 @@ def match(swapped: np.ndarray, target: np.ndarray, mask: np.ndarray,
 
     # Only apply where the mask says face; elsewhere keep the original pixels.
     m = mask[:, :, None] if mask.ndim == 2 else mask
-    return swapped * (1.0 - m) + corrected * m, params
+    return swapped * (1.0 - m) + corrected * m
+
+
+def match(swapped: np.ndarray, target: np.ndarray, mask: np.ndarray,
+          params: Optional[dict] = None) -> tuple[np.ndarray, dict]:
+    """Recolour ``swapped`` to sit in ``target``'s lighting, inside ``mask``.
+
+    Returns (corrected, params). Kept for callers that want measure-and-apply
+    in one step; the render loop uses :func:`estimate` + :func:`apply` so it
+    can smooth in between.
+    """
+    s_lab = _to_lab(swapped)
+    if params is None:
+        params = _params_from_lab(s_lab, _to_lab(target), mask)
+    return apply(swapped, mask, params), params
 
 
 class ColorSmoother:

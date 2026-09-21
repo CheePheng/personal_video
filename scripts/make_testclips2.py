@@ -170,20 +170,24 @@ def build_synth(face: np.ndarray) -> dict[str, Path]:
 
 # ---------------------------------------------------------------- real
 def build_real() -> dict[str, Path]:
-    """Cut short regression fixtures from footage already on disk.
+    """Cut short regression fixtures from a CURATED source clip.
 
     Real footage contributes what composites cannot: sensor noise, codec
     artefacts, rolling shutter, genuine motion blur and lighting that drifts.
+
+    The source must be placed deliberately at ``data/testclips/source.mp4``.
+    This used to take ``sorted(data/uploads/*.mp4)[0]`` -- whatever the user
+    happened to have uploaded, chosen by filename order. A benchmark fixture
+    is something you should be able to point at and justify, and picking it
+    by accident makes every number measured against it unexplainable.
     """
     REAL.mkdir(parents=True, exist_ok=True)
     made: dict[str, Path] = {}
-    sources = sorted((ROOT / "data" / "uploads").glob("*.mp4"))
-    sources = [s for s in sources if s.stat().st_size > 5_000_000]
-    if not sources:
-        print("  no local footage available for real-video fixtures")
+    src = OUT / "source.mp4"
+    if not src.is_file():
+        print("  no curated source clip at %s -- skipping real fixtures.\n"
+              "  Place a single-person clip there to enable them." % src)
         return made
-
-    src = sources[0]
     # Different offsets give genuinely different motion/lighting conditions.
     cuts = [("real_A_motion", "20", "4"), ("real_B_talking", "48", "4"),
             ("real_C_lighting", "75", "4")]
