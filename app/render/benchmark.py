@@ -17,6 +17,7 @@ early would hide *why* something won, and the trade-offs are the whole point.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import time
 from dataclasses import asdict
@@ -32,6 +33,11 @@ from app.render.registry import ENHANCERS, SWAPPERS
 from app.render.types import (Face, PipelineConfig, RenderError, SourceIdentity)
 
 BENCH_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "benchmarks"
+CACHE_DIR = BENCH_DIR / "cache"
+
+# Bump when the candidate matrix, the metrics or the weights change, so a
+# cached verdict from an older algorithm is never silently reused.
+ALGORITHM_VERSION = 3
 
 # Cosine below which two consecutive rendered faces are treated as different
 # people. Sampled frames are far apart in time, so genuine pose/lighting drift
@@ -133,18 +139,56 @@ def candidate_configs(available: Optional[list[str]] = None,
     if not swappers:
         raise RenderError("no swap model is installed. Run: python -m app.render.download")
 
+    # Stage 1: every installed swapper, bare. Bare isolates identity -- an
+    # enhancer can mask a weak swapper, so the families must be compared
+    # without one before any restoration is layered on.
     configs = [PipelineConfig(swapper=s, enhancer=None, enhancer_blend=0.0,
                               mask="model", label=f"{s} bare") for s in swappers]
     if not thorough:
         return configs
 
+    # Stage 2: restoration options, explored on the swapper most likely to
+    # win. A full cross product of 9 swappers x 4 enhancers x 2 blends would
+    # be 72 candidates -- minutes of GPU time for combinations that cannot
+    # win, since a weak swapper plus a restorer is still a weak identity.
     enhancers = [e for e in ENHANCERS if present(e)]
+    lead = swappers[0]
     for e in enhancers:
         for blend in (0.4, 0.7):
             configs.append(PipelineConfig(
-                swapper=swappers[0], enhancer=e, enhancer_blend=blend,
-                mask="model", label=f"{swappers[0]} + {e}@{int(blend*100)}"))
+                swapper=lead, enhancer=e, enhancer_blend=blend,
+                mask="model", label=f"{lead} + {e}@{int(blend*100)}"))
     return configs
+
+
+def refine_with_enhancers(winner_swapper: str, samples, identity, opts,
+                          exclude: set[str]) -> list[dict[str, Any]]:
+    """Second pass: re-explore restoration on whichever swapper actually won.
+
+    Stage 2 above guesses which swapper to pair enhancers with. If a different
+    family wins stage 1, that guess was wrong, so the enhancer sweep is redone
+    against the real winner rather than reporting a combination that was never
+    measured.
+    """
+    from app.render.sessions import MODELS_DIR
+    from app.render.registry import ALL
+
+    out: list[dict[str, Any]] = []
+    for e in ENHANCERS:
+        if not (MODELS_DIR / ALL[e].filename).exists():
+            continue
+        for blend in (0.4, 0.7):
+            label = f"{winner_swapper} + {e}@{int(blend*100)}"
+            if label in exclude:
+                continue
+            cfg = PipelineConfig(swapper=winner_swapper, enhancer=e,
+                                 enhancer_blend=blend, mask="model", label=label)
+            try:
+                out.append(score_config(cfg, samples, identity, opts))
+            except RenderError as ex:
+                out.append({"config": asdict(cfg), "label": label,
+                            "error": str(ex)[:300], "score": -1.0})
+    return out
 
 
 # ---------------------------------------------------------------- measuring
@@ -259,14 +303,103 @@ def _identity_guard(bare: dict, enhanced: dict, max_loss: float = 0.04) -> bool:
     return (b - e) <= max_loss
 
 
+def free_mb() -> Optional[int]:
+    """Free VRAM, or None when it cannot be measured."""
+    g = sessions.gpu_info()
+    if g.get("vram_total_mb") is None:
+        return None
+    return int(g["vram_total_mb"]) - int(g["vram_used_mb"])
+
+
+# ---------------------------------------------------------------- caching
+def _file_fingerprint(path: Path, sample_bytes: int = 1 << 20) -> str:
+    """Cheap content fingerprint: size + head + tail.
+
+    A full hash of a multi-GB video would cost more than the benchmark it is
+    meant to save. Size plus both ends catches re-encodes, trims and swaps;
+    it would miss a same-length edit confined to the middle, which is not a
+    realistic way to arrive at a different video with an identical name.
+    """
+    h = hashlib.sha256()
+    st = path.stat()
+    h.update(str(st.st_size).encode())
+    with open(path, "rb") as f:
+        h.update(f.read(sample_bytes))
+        if st.st_size > sample_bytes * 2:
+            f.seek(-sample_bytes, 2)
+            h.update(f.read(sample_bytes))
+    return h.hexdigest()
+
+
+def cache_key(target_path: str, identity: SourceIdentity,
+              opts: RenderOptions) -> str:
+    """Deterministic key over everything that could change the verdict."""
+    from app.render.registry import ALL
+    from app.render.sessions import MODELS_DIR
+
+    h = hashlib.sha256()
+    h.update(f"v{ALGORITHM_VERSION}|".encode())
+    h.update(_file_fingerprint(Path(target_path)).encode())
+    # The fused identity vector itself -- different photos, different verdict.
+    h.update(np.asarray(identity.embedding, np.float32).tobytes())
+    h.update(f"|{opts.swap_all_faces}|{opts.detect_threshold}".encode())
+
+    # Model set AND their recorded hashes: replacing a weights file must
+    # invalidate, not silently reuse a verdict measured on the old one.
+    try:
+        recorded = json.loads((MODELS_DIR / "hashes.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        recorded = {}
+    for name in sorted(ALL):
+        if (MODELS_DIR / ALL[name].filename).exists():
+            entry = recorded.get(name) or {}
+            h.update(f"{name}:{entry.get('sha256', '?')}|".encode())
+    return h.hexdigest()[:32]
+
+
+def load_cached(key: str) -> Optional[dict[str, Any]]:
+    p = CACHE_DIR / f"{key}.json"
+    if not p.is_file():
+        return None
+    try:
+        rep = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if rep.get("algorithm_version") != ALGORITHM_VERSION:
+        return None
+    return rep
+
+
+def save_cached(key: str, report: dict[str, Any]) -> None:
+    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    report = dict(report)
+    report["algorithm_version"] = ALGORITHM_VERSION
+    (CACHE_DIR / f"{key}.json").write_text(
+        json.dumps(report, indent=2, default=str), encoding="utf-8")
+
+
 # ---------------------------------------------------------------- driver
 def run(target_path: str, identity: SourceIdentity, opts: RenderOptions,
         job_id: str, on_progress: Optional[Callable[[str, float, dict], None]] = None,
-        thorough: bool = True) -> tuple[PipelineConfig, dict[str, Any]]:
+        thorough: bool = True, use_cache: bool = True
+        ) -> tuple[PipelineConfig, dict[str, Any]]:
     """Benchmark candidate pipelines and return (winner, full report)."""
     def emit(stage: str, pct: float, **extra: Any) -> None:
         if on_progress:
             on_progress(stage, pct, extra)
+
+    key = cache_key(target_path, identity, opts) if use_cache else None
+    if key:
+        cached = load_cached(key)
+        if cached:
+            emit("selecting best pipeline", 100.0,
+                 winner=f"{cached['winner']['label']} (cached)")
+            BENCH_DIR.mkdir(parents=True, exist_ok=True)
+            cached["job_id"] = job_id
+            cached["from_cache"] = True
+            (BENCH_DIR / f"{job_id}.json").write_text(
+                json.dumps(cached, indent=2, default=str), encoding="utf-8")
+            return PipelineConfig(**cached["winner"]["config"]), cached
 
     info = video.probe(target_path)
     emit("analysing video", 5.0)
@@ -285,11 +418,36 @@ def run(target_path: str, identity: SourceIdentity, opts: RenderOptions,
         except RenderError as e:
             results.append({"config": asdict(cfg), "label": label,
                             "error": str(e)[:300], "score": -1.0})
+        finally:
+            # Evict this candidate's swapper once it has been scored. Nine
+            # swappers plus four enhancers held resident is several GB of
+            # VRAM that nothing needs simultaneously, and on a 4K frame that
+            # headroom is the difference between finishing and an OOM.
+            if cfg.swapper != configs[0].swapper:
+                sessions.release(cfg.swapper)
+            if free_mb() is not None and free_mb() < 2500:
+                sessions.release()
 
     ok = [r for r in results if r.get("score", -1) >= 0]
     if not ok:
         raise RenderError("every candidate pipeline failed during benchmarking; "
                           f"first error: {results[0].get('error') if results else 'unknown'}")
+
+    # If a swapper OTHER than the one we paired enhancers with won stage 1,
+    # the enhancer sweep was run against the wrong base. Redo it on the actual
+    # winner so we never report a combination that was never measured.
+    bare_now = [r for r in ok if not r["config"].get("enhancer")]
+    if thorough and bare_now:
+        top_bare = max(bare_now, key=lambda r: r["score"])
+        top_name = top_bare["config"]["swapper"]
+        paired = {r["config"]["swapper"] for r in ok if r["config"].get("enhancer")}
+        if top_name not in paired:
+            emit("testing restoration", 85.0, candidate=f"refining on {top_name}")
+            extra = refine_with_enhancers(
+                top_name, samples, identity, opts,
+                exclude={r.get("label") for r in results})
+            results.extend(extra)
+            ok = [r for r in results if r.get("score", -1) >= 0]
 
     emit("selecting best pipeline", 90.0)
 
@@ -325,8 +483,11 @@ def run(target_path: str, identity: SourceIdentity, opts: RenderOptions,
     }
 
     BENCH_DIR.mkdir(parents=True, exist_ok=True)
+    report["from_cache"] = False
     (BENCH_DIR / f"{job_id}.json").write_text(
         json.dumps(report, indent=2, default=str), encoding="utf-8")
+    if key:
+        save_cached(key, report)
 
     emit("selecting best pipeline", 100.0, winner=winner["label"])
     return cfg, report

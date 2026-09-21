@@ -52,8 +52,38 @@ the ONNX graph expects.
 
 ### Swappers
 
-All three are the same architecture family at 256 px, take an **L2-normalised ArcFace 512-d
-embedding** as identity conditioning, and output their own mask.
+Nine swappers are registered and **all nine actually run inference** in Auto Max -- they are
+benchmarked against the same sampled frames with the same metrics, not merely listed. Three
+different identity-conditioning conventions are involved, and using the wrong one produces a
+convincing face that is simply the wrong person:
+
+| Convention | Families | What the model receives |
+|---|---|---|
+| L2-normalised ArcFace | HyperSwap 1a/1b/1c | the 512-d vector, unit length |
+| Raw ArcFace | AlphaFace | the 512-d vector, **not** normalised |
+| Converted | GHOST, SimSwap | ArcFace passed through a `crossface_*` 512->512 learned remap into that family's own identity space |
+
+Measured identity on one reference face (cosine to source, higher is better), single frame,
+same mask and colour pipeline for all:
+
+| Swapper | Identity | ms | Notes |
+|---|---|---|---|
+| `hyperswap_1a_256` | **0.971** | ~1000 | best on this face |
+| `hyperswap_1b_256` | 0.969 | ~770 | wins on dark footage (see below) |
+| `hyperswap_1c_256` | 0.967 | ~775 | |
+| `alphaface_256` | 0.902 | ~1080 | newest architecture (2026) |
+| `ghost_1_256` | 0.811 | ~906 | best of the permissively-licensed family |
+| `ghost_2_256` | 0.775 | ~1730 | |
+| `ghost_3_256` | 0.768 | ~2590 | slowest |
+| `simswap_unofficial_512` | 0.668 | ~1190 | only native-512 swapper |
+| `simswap_256` | 0.604 | ~849 | |
+
+HyperSwap leads on this face, but that ranking is **per-video, not universal** -- on the dark
+clip Auto Max selected `hyperswap_1b_256` bare over `1a`, and over every enhanced pipeline.
+That is exactly why the competition is run per render rather than decided once here.
+
+The HyperSwap trio share an architecture at 256 px, take an **L2-normalised ArcFace 512-d
+embedding**, and output their own mask.
 
 | Model | Role | Size | Input | Template | Normalisation | Licence (code / weights) | Note |
 |---|---|---|---|---|---|---|---|
@@ -68,6 +98,24 @@ this variant. The HuggingFace weight repositories carry zero licence metadata (`
 The obligations here are therefore **indeterminate, not merely strict** - we do not know what we
 are permitted to do, which is a worse position than a clearly non-commercial licence. Treated as
 research-only. Training data: VGGFace2.
+
+#### Newly implemented in V2.1
+
+| Model | Size | Input | Template | Normalisation | Licence (code / weights) | Note |
+|---|---|---|---|---|---|---|
+| `alphaface_256` | 555.6 MB | 256 | `arcface_128` | `x/255` (mean 0, std 1) | **MIT per upstream repo**; FaceFusion labels weights NC - unresolved | arXiv:2601.16429 (Yu et al., 2026). Takes the **raw** ArcFace vector. |
+| `ghost_1_256` | 514.9 MB | 256 | `arcface_112_v1` | mean/std 0.5 | **Apache-2.0** (ai-forever); ONNX is a third-party conversion | The only genuinely permissive swapper family available. |
+| `ghost_2_256` | 738.7 MB | 256 | `arcface_112_v1` | mean/std 0.5 | Apache-2.0 | Second training run. |
+| `ghost_3_256` | 855.5 MB | 256 | `arcface_112_v1` | mean/std 0.5 | Apache-2.0 | Third training run. |
+| `simswap_256` | 220.4 MB | 256 | `arcface_112_v1` | **ImageNet** mean/std | CC BY-NC 4.0 | The **only** model here on ImageNet statistics - a classic silent-bug source. |
+| `simswap_unofficial_512` | 239.2 MB | 512 | `arcface_112_v1` | `x/255` | CC BY-NC 4.0 | Official neuralchen 512 beta despite the "unofficial" filename. |
+| `crossface_ghost` | 22.1 MB | - | - | - | Apache-2.0 | 512->512 identity remap for GHOST (raw output). |
+| `crossface_simswap` | 22.1 MB | - | - | - | CC BY-NC 4.0 | 512->512 identity remap for SimSwap (output re-normalised). |
+
+GHOST and SimSwap were failing before V2.1 purely for want of the `arcface_112_v1` alignment
+template, which predates `v2` and is what those families were trained against. With the wrong
+template they still produced a face -- just a subtly misaligned, subtly wrong one, which is the
+failure mode worth guarding against.
 
 ### Restorers / enhancers
 

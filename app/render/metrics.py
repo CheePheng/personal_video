@@ -204,11 +204,16 @@ class SceneCutDetector:
     """
 
     def __init__(self, hist_threshold: float = 0.55, mad_floor: float = 8.0,
-                 mad_ratio: float = 3.0, window: int = 24):
+                 mad_ratio: float = 3.0, window: int = 24, warmup: int = 3):
         self.hist_threshold = hist_threshold
         self.mad_floor = mad_floor
         self.mad_ratio = mad_ratio
         self.window = window
+        # The spike test compares against this clip's own motion baseline, so
+        # it is meaningless until a baseline exists. Before then, ordinary
+        # camera movement on frame 2 would look like a spike above zero and
+        # fire a false cut. Until warmup completes we trust the histogram only.
+        self.warmup = warmup
         self._recent: list[float] = []
         self.cuts = 0
 
@@ -219,8 +224,10 @@ class SceneCutDetector:
         corr = float(cv2.compareHist(_hist(prev), _hist(cur), cv2.HISTCMP_CORREL))
         mad = _mad(prev, cur)
 
-        baseline = float(np.median(self._recent)) if self._recent else 0.0
-        spike = mad >= self.mad_floor and mad >= self.mad_ratio * max(baseline, 1.0)
+        have_baseline = len(self._recent) >= self.warmup
+        baseline = float(np.median(self._recent)) if have_baseline else 0.0
+        spike = (have_baseline and mad >= self.mad_floor
+                 and mad >= self.mad_ratio * max(baseline, 1.0))
         cut = corr < self.hist_threshold or spike
 
         self._recent.append(mad)
