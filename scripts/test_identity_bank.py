@@ -136,7 +136,7 @@ def main() -> int:
                 if not fs:
                     continue
                 f = max(fs, key=lambda x: x.area)
-                yaw, _ = alignment.pose_from_kps(f.kps)
+                yaw, _pitch, _roll = alignment.pose_3d(f.kps, fr.shape)
                 # Re-condition this frame on the chosen strategy's vector.
                 r.embedding = swapping.prepare_embedding(cfg.swapper, vector_fn(yaw))
                 out, _ = r.render_face(fr, f)

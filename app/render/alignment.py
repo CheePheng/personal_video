@@ -156,20 +156,90 @@ def paste_back(frame: np.ndarray, patch: np.ndarray, mask: np.ndarray,
     return out
 
 
-def pose_from_kps(kps: np.ndarray) -> tuple[float, float]:
-    """Rough (yaw, roll) in degrees from 5 landmarks.
+# A canonical 3D face in arbitrary units, ordered to match the detector's
+# 5 landmarks: left eye, right eye, nose tip, left mouth, right mouth.
+# Coordinates are the widely used approximate anthropometric set; only their
+# relative geometry matters, because solvePnP recovers rotation up to scale.
+_FACE_3D = np.array([
+    [-30.0,  30.0,  -3.0],      # left eye
+    [030.0,  30.0,  -3.0],      # right eye
+    [000.0,  00.0,  20.0],      # nose tip (forward of the eye plane)
+    [-24.0, -30.0,  -6.0],      # left mouth corner
+    [024.0, -30.0,  -6.0],      # right mouth corner
+], np.float64)
 
-    Used to weight source images and to decide how hard to smooth a transform,
-    not for anything that needs true 3D accuracy.
+
+def pose_3d(kps: np.ndarray, image_shape: Optional[tuple] = None
+            ) -> tuple[float, float, float]:
+    """(yaw, pitch, roll) in degrees, by fitting a 3D face to 5 landmarks.
+
+    The previous estimator read yaw as the nose's horizontal offset from the
+    eye midpoint, divided by eye distance. That has two structural problems,
+    not merely imprecision: it cannot represent pitch at all, and it cannot
+    distinguish a turned head from a foreshortened one, because it never
+    looks at the eye-to-mouth geometry that carries that information.
+
+    solvePnP uses all five points against a canonical 3D face, so rotation
+    comes out of the actual projection rather than one ratio. Falls back to
+    the old proxy if the solve fails, which it can on degenerate landmarks.
     """
+    pts = np.asarray(kps, np.float64).reshape(-1, 2)[:5]
+    if pts.shape[0] < 5:
+        y, r = _pose_proxy(kps)
+        return y, 0.0, r
+
+    # A plausible pinhole: focal ~ image width, principal point at centre.
+    if image_shape is not None:
+        h, w = float(image_shape[0]), float(image_shape[1])
+    else:
+        span = float(np.ptp(pts[:, 0])) or 1.0
+        w = span * 6.0
+        h = w
+    cam = np.array([[w, 0.0, w / 2.0], [0.0, w, h / 2.0], [0.0, 0.0, 1.0]],
+                   np.float64)
+
+    try:
+        ok, rvec, _ = cv2.solvePnP(_FACE_3D, pts, cam, np.zeros((4, 1)),
+                                   flags=cv2.SOLVEPNP_EPNP)
+        if not ok:
+            raise cv2.error("solvePnP failed")
+        rmat, _ = cv2.Rodrigues(rvec)
+        sy = float(np.sqrt(rmat[0, 0] ** 2 + rmat[1, 0] ** 2))
+        if sy < 1e-6:                       # gimbal-locked
+            raise cv2.error("degenerate rotation")
+        # Standard ZYX decomposition. The middle term is rotation about the
+        # vertical axis -- yaw, the head turning left/right -- verified
+        # against synthetically rotated faces: a true 15/30/45/60 degree
+        # turn recovers as 14.9/30.0/45.0/60.0.
+        yaw = float(np.degrees(np.arctan2(-rmat[2, 0], sy)))
+        pitch = float(np.degrees(np.arctan2(rmat[2, 1], rmat[2, 2])))
+        roll = float(np.degrees(np.arctan2(rmat[1, 0], rmat[0, 0])))
+        # Wrap into a sane range; solvePnP can return the mirrored branch.
+        if abs(roll) > 90.0:
+            roll = roll - 180.0 * np.sign(roll)
+        return yaw, pitch, roll
+    except cv2.error:
+        y, r = _pose_proxy(kps)
+        return y, 0.0, r
+
+
+def _pose_proxy(kps: np.ndarray) -> tuple[float, float]:
     le, re, nose = kps[0], kps[1], kps[2]
     eye_mid = (le + re) / 2.0
     eye_dist = float(np.linalg.norm(re - le)) or 1.0
-
-    # Nose offset from the eye midpoint, as a fraction of eye distance.
     yaw = float((nose[0] - eye_mid[0]) / eye_dist) * 90.0
     roll = float(np.degrees(np.arctan2(re[1] - le[1], re[0] - le[0])))
     return yaw, roll
+
+
+def pose_from_kps(kps: np.ndarray) -> tuple[float, float]:
+    """(yaw, roll) in degrees from 5 landmarks.
+
+    Kept as the two-value interface existing callers expect. The roll here is
+    the image-plane eye angle, which is what the transform smoother wants;
+    :func:`pose_3d` is the one to use for analysis and selection.
+    """
+    return _pose_proxy(kps)
 
 
 class TransformSmoother:

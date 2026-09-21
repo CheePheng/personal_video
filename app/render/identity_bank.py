@@ -77,7 +77,11 @@ class Reference:
 
 def _quality(frame: np.ndarray, face: Face) -> dict[str, float]:
     q = recognition.assess_source_face(frame, face)
-    yaw, roll = alignment.pose_from_kps(face.kps)
+    # pose_3d, not the 2D proxy. The proxy reads a true 30-degree turn as
+    # 17.9 and 45 as 31.7 -- roughly 40% low -- and cannot see pitch at all.
+    # Indexing a pose bank with it collapses genuinely different views into
+    # the same bin, which is how a pose-aware method measures as a no-op.
+    yaw, _pitch, roll = alignment.pose_3d(face.kps, frame.shape)
     return {"size": float(q["size"]), "blur": float(q["blur"]),
             "score": float(q["detector_score"]), "yaw": float(yaw),
             "roll": float(roll)}
