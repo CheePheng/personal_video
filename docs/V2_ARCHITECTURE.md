@@ -1055,3 +1055,75 @@ Collected from the gaps noted above, all verified against the code:
    the best bare swapper. Since `SWAPPERS` is a dict in insertion order, that is
    always `hyperswap_1a_256`. If a sibling wins the bare pass, restoration is
    never explored against it.
+
+---
+
+# V2.1 completion pass
+
+V2.1 changed no architecture. It closed the gaps the V2 report listed as
+unfinished, and everything below is measured rather than asserted.
+
+## Swapper competition is now real
+
+V2 shipped nine swappers in the registry but Auto Max only ever ran three.
+GHOST and SimSwap were failing at `alignment.estimate_matrix` for want of the
+`arcface_112_v1` template -- the one those families were trained against.
+Adding it, plus the `crossface_*` identity converters and the ImageNet /
+centred-128 normalisation paths, means all nine now run real inference.
+
+Three identity-conditioning conventions are supported, all declared in the
+registry rather than branched on by name:
+
+| Convention | Families | Input to the swapper |
+|---|---|---|
+| L2-normalised ArcFace | HyperSwap 1a/1b/1c | unit-length 512-d vector |
+| Raw ArcFace | AlphaFace | 512-d vector, unnormalised |
+| Converted | GHOST, SimSwap | ArcFace -> `crossface_*` 512->512 remap -> (optionally) re-normalised |
+
+`benchmark.candidate_configs` competes every installed swapper bare first,
+which isolates identity: an enhancer can flatter a weak swapper, so the
+families have to be compared without one. Enhancers are then explored on the
+most promising swapper, and `refine_with_enhancers` re-runs that sweep against
+whichever swapper actually won -- otherwise Auto Max could report a
+combination it never measured.
+
+## Anchor-based detectors
+
+`detectors_anchor.py` implements the SCRFD / RetinaFace output format, which
+is why those two sat registered-but-unwired in V2. They emit nine tensors --
+three strides x (scores, box distances, landmark distances) -- where every
+value is a distance from an anchor centre in stride units. Nothing about that
+is inferable from the tensor shapes. Decoded landmarks agree with YOLOFace to
+within 1.6 px on the same face.
+
+`detect_with_fallback` will try a second detector on a frame where the first
+found nothing. It is a **recall** aid only: it can rescue a missed face, but
+it never decides who the tracked person is. That stays with the tracker, which
+matches on identity -- so a detector rescue cannot move the swap onto somebody
+else.
+
+## Scoring is now provably load-bearing
+
+`scripts/test_scoring.py` asserts, for every weighted term, that degrading the
+underlying quality (a) changes the metric, (b) in the correct direction,
+(c) changes that term's contribution, and (d) lowers the total score. 28
+checks. This exists because a term was previously hard-coded, which silently
+gave every candidate full marks for 18% of the score.
+
+Writing those tests surfaced a second real defect: `SceneCutDetector` compared
+pixel difference against a motion baseline it did not yet have on frame 2, so
+ordinary camera movement at the start of a clip registered as a cut. A warmup
+guard now gates the spike test until a baseline exists.
+
+## Benchmark caching
+
+`benchmark.cache_key` hashes the target video (size + head + tail, because a
+full hash of a multi-GB file would cost more than the benchmark it saves), the
+fused identity vector, the relevant options, the installed model set **and
+each model's recorded SHA256**, plus `ALGORITHM_VERSION`. Replacing a weights
+file or changing the metrics therefore invalidates; re-rendering the same job
+does not. Measured: ~4 minutes cold, instant warm, identical winner.
+
+Sessions are also evicted between candidates. Nine swappers plus four
+enhancers held resident is several GB that nothing needs simultaneously, and
+on a 4K frame that headroom is the difference between finishing and an OOM.
