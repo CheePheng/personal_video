@@ -1,82 +1,101 @@
-# Starts the face swap app and exposes it on a public Cloudflare URL.
+# Starts the face swap app and exposes it on the permanent public URL.
 #
-# Notes that matter:
-#  * cloudflared prints its URL on STDERR, so we capture both streams to a file.
-#  * cloudflared prints the hostname BEFORE it is actually routable, so we poll
-#    /healthz through the tunnel before telling the user it is ready. Otherwise
-#    the first click lands on a dead link.
+# Two things here are not cosmetic:
+#
+#  * The process that binds the port is a CHILD of what Start-Process returns.
+#    Tracking the returned handle is what used to leave an orphaned server
+#    holding port 8765 after shutdown, so the next start could not bind while
+#    the health poll still got 200 from the orphan and printed a success
+#    banner over a dead server. Ownership now comes from _common.ps1, which
+#    decides by port and command line rather than by a handle.
+#
+#  * cloudflared prints its URL on STDERR and prints it BEFORE the hostname is
+#    routable, so we capture both streams and poll through the tunnel before
+#    claiming anything is live.
+#
+# SERVER READY is printed only when every check in Test-Ready passes.
 
 $ErrorActionPreference = "Stop"
-$Root      = Split-Path -Parent $PSScriptRoot
-$Python    = "C:\fsw\venv\Scripts\python.exe"
+. (Join-Path $PSScriptRoot "_common.ps1")
+
+$Root        = $ProjectRoot
+$Python      = "C:\fsw\venv\Scripts\python.exe"
 $Cloudflared = "C:\Program Files (x86)\cloudflared\cloudflared.exe"
-$Port      = 8765
-$LogDir    = Join-Path $Root "logs"
+$Port        = $AppPort
+$Local       = "http://127.0.0.1:$Port"
+$LogDir      = Join-Path $Root "logs"
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
-$SrvLog    = Join-Path $LogDir "server.log"
-$TunLog    = Join-Path $LogDir "tunnel.log"
+$SrvLog      = Join-Path $LogDir "server.log"
+$TunLog      = Join-Path $LogDir "tunnel.log"
 
 function Say($msg, $color = "Gray") { Write-Host $msg -ForegroundColor $color }
 
-if (-not (Test-Path $Python))      { Say "Missing venv at $Python. Run scripts/00_install_runtime.sh first." "Red"; exit 1 }
-if (-not (Test-Path $Cloudflared)) { Say "cloudflared not found. Install: winget install Cloudflare.cloudflared" "Red"; exit 1 }
+function Fail($msg) {
+    Say ""
+    Say "  STARTUP FAILED" "Red"
+    Say "  $msg" "Red"
+    foreach ($f in @("$SrvLog.err", $SrvLog)) {
+        if (Test-Path $f) {
+            $tail = Get-Content $f -Tail 20 -ErrorAction SilentlyContinue
+            if ($tail) {
+                Say "  --- $(Split-Path -Leaf $f) ---" "DarkGray"
+                $tail | ForEach-Object { Say "    $_" "DarkGray" }
+            }
+        }
+    }
+    Stop-AppProcesses -Quiet | Out-Null
+    exit 1
+}
+
+if (-not (Test-Path $Python))      { Fail "Missing venv at $Python. Run scripts/00_install_runtime.sh first." }
+if (-not (Test-Path $Cloudflared)) { Fail "cloudflared not found. Install: winget install Cloudflare.cloudflared" }
 
 Say ""
-Say "  Face Swap" "Cyan"
-Say "  ---------" "Cyan"
+Say "  Face Swap Max" "Cyan"
+Say "  -------------" "Cyan"
 
 # --- clear out anything left from a previous run -----------------------------
-# Without this, starting again just leaves the OLD server owning port 8765:
-# uvicorn fails to bind, and every request keeps hitting the stale process,
-# which is still running whatever code was on disk when IT started. Edits to
-# the app then appear to do nothing.
 Say "  clearing previous run..."
+$n = Stop-AppProcesses
+if ($n -gt 0) { Say "    cleared $n process(es)" "DarkGray" }
+if (Get-AppListenerPid) { Fail "port $Port is still held after cleanup; stop it manually and retry." }
 
-$stale = Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue |
-         Where-Object { $_.CommandLine -and $_.CommandLine -like "*uvicorn*app.main*" }
-foreach ($p in $stale) {
-    try { Stop-Process -Id $p.ProcessId -Force -ErrorAction Stop; Say "    stopped stale process $($p.ProcessId)" "DarkGray" } catch { }
-}
-
-# Whoever holds the port wins, so make sure it is actually free before binding.
-$holder = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-foreach ($h in $holder) {
-    try { Stop-Process -Id $h.OwningProcess -Force -ErrorAction Stop; Say "    freed port $Port" "DarkGray" } catch { }
-}
-if ($stale -or $holder) { Start-Sleep -Seconds 2 }
-
-# Truncate rather than append: a 4000-line log of old crashes makes the "last
-# 20 lines" diagnostic above useless, and hides whether an error is current.
 foreach ($f in @($SrvLog, "$SrvLog.err")) { if (Test-Path $f) { Clear-Content $f -Force -ErrorAction SilentlyContinue } }
 
 # --- local server -----------------------------------------------------------
 Say "  starting render server..."
+# FSW_APP_ROOT tags the command line so _common.ps1 can recognise this server
+# (and its child) as ours without ever matching an unrelated python.exe.
+$env:FSW_APP_ROOT = $Root
 $srv = Start-Process -FilePath $Python `
     -ArgumentList "-m","uvicorn","app.main:app","--host","127.0.0.1","--port","$Port","--log-level","warning" `
     -WorkingDirectory $Root -PassThru -NoNewWindow `
     -RedirectStandardOutput $SrvLog -RedirectStandardError "$SrvLog.err"
 
 $ok = $false
-foreach ($i in 1..40) {
+foreach ($i in 1..60) {
     Start-Sleep -Milliseconds 500
-    try {
-        $r = Invoke-WebRequest -Uri "http://127.0.0.1:$Port/healthz" -UseBasicParsing -TimeoutSec 3
-        if ($r.StatusCode -eq 200) { $ok = $true; break }
-    } catch { }
+    # If the launcher died AND nothing is listening, the server is genuinely
+    # gone -- do not keep polling for the full timeout.
+    if ($srv.HasExited -and -not (Get-AppListenerPid)) {
+        Fail "uvicorn exited during startup (exit code $($srv.ExitCode))."
+    }
+    if ((Invoke-AppRequest -Url "$Local/healthz" -TimeoutSec 3) -eq 200) { $ok = $true; break }
 }
-if (-not $ok) {
-    Say "  server failed to start. Last lines:" "Red"
-    if (Test-Path "$SrvLog.err") { Get-Content "$SrvLog.err" -Tail 20 | ForEach-Object { Say "    $_" "DarkGray" } }
-    if ($srv -and -not $srv.HasExited) { Stop-Process -Id $srv.Id -Force }
-    exit 1
-}
-Say "  server up on http://127.0.0.1:$Port" "Green"
+if (-not $ok) { Fail "server did not answer /healthz on $Local within 30s." }
+
+$listener = Get-AppListenerPid
+$count = @(Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue).Count
+if ($count -ne 1) { Fail "expected exactly 1 listener on port $Port, found $count." }
+Say "  server up on $Local (pid $listener)" "Green"
 
 # --- public tunnel ----------------------------------------------------------
+$publicOk = $false
+$publicNote = ""
 Say "  opening public tunnel..."
-if (Test-Path $TunLog) { Remove-Item $TunLog -Force }
+foreach ($f in @($TunLog, "$TunLog.err")) { if (Test-Path $f) { Remove-Item $f -Force -ErrorAction SilentlyContinue } }
 $tun = Start-Process -FilePath $Cloudflared `
-    -ArgumentList "tunnel","--url","http://127.0.0.1:$Port","--no-autoupdate" `
+    -ArgumentList "tunnel","--url","$Local","--no-autoupdate" `
     -PassThru -NoNewWindow -RedirectStandardOutput $TunLog -RedirectStandardError "$TunLog.err"
 
 $public = $null
@@ -91,48 +110,14 @@ foreach ($i in 1..60) {
     if ($public) { break }
 }
 
-if (-not $public) {
-    Say "  could not get a tunnel URL; the app still works locally." "Yellow"
-} else {
-    # The hostname is printed before DNS/routing settles. Wait for a real 200.
-    # DNS for a freshly-minted trycloudflare hostname can take well over a
-    # minute to resolve, and cloudflared prints the name before it is routable.
-    # Poll until it genuinely answers rather than handing over a dead link.
-    Say "  waiting for $public to go live (can take a minute)..."
-    $live = $false
-    foreach ($i in 1..90) {
-        Start-Sleep -Seconds 2
-        try {
-            $r = Invoke-WebRequest -Uri "$public/healthz" -UseBasicParsing -TimeoutSec 5
-            if ($r.StatusCode -eq 200) { $live = $true; break }
-        } catch { }
-        if ($i % 10 -eq 0) { Say "    still routing... ($($i*2)s)" "DarkGray" }
-    }
-    if ($live) {
-        Say "  tunnel is live" "Green"
-    } else {
-        Say "  tunnel did not answer in 3 min. Try the link anyway, or restart." "Yellow"
-    }
-}
-
-# Written by the app on first run; shown here so the link and the password
-# always arrive together.
-$PwFile = Join-Path $Root "data\.password"
-$Pw = if (Test-Path $PwFile) { (Get-Content $PwFile -Raw).Trim() } else { "(see data\.password)" }
-
-# --- tell the Worker where we are ------------------------------------------
-# The workers.dev URL is permanent; the tunnel URL behind it is not. Register
-# the current one, then heartbeat so the Worker can tell "PC off" from "PC on".
-$Permanent  = "https://faceswap.doctorwilddoctorwild.workers.dev"
-$SecretFile = Join-Path $Root "data\.register_secret"
-$Secret     = if (Test-Path $SecretFile) { (Get-Content $SecretFile -Raw).Trim() } else { $null }
+$Secret = Get-AppSecret
 $registered = $false
 
 function Send-Heartbeat {
     param($TunnelUrl)
     if (-not $Secret -or -not $TunnelUrl) { return $false }
     try {
-        Invoke-RestMethod -Uri "$Permanent/__register" -Method Post -TimeoutSec 15 `
+        Invoke-RestMethod -Uri "$PermanentUrl/__register" -Method Post -TimeoutSec 15 `
             -Headers @{ "x-register-secret" = $Secret } `
             -ContentType "application/json" `
             -Body (@{ url = $TunnelUrl } | ConvertTo-Json -Compress) | Out-Null
@@ -140,32 +125,114 @@ function Send-Heartbeat {
     } catch { return $false }
 }
 
-if ($public -and $Secret) {
-    Say "  linking permanent URL..."
-    $registered = Send-Heartbeat -TunnelUrl $public
-    if ($registered) { Say "  permanent URL is live" "Green" }
-    else { Say "  could not reach the Worker; use the temporary link below." "Yellow" }
+if (-not $public) {
+    $publicNote = "cloudflared never printed a tunnel hostname"
+} else {
+    Say "  waiting for tunnel routing (can take a minute)..."
+    $live = $false
+    foreach ($i in 1..90) {
+        Start-Sleep -Seconds 2
+        if ((Invoke-AppRequest -Url "$public/healthz" -TimeoutSec 5) -eq 200) { $live = $true; break }
+        if ($i % 10 -eq 0) { Say "    still routing... ($($i*2)s)" "DarkGray" }
+    }
+    if (-not $live) {
+        $publicNote = "tunnel hostname $public did not route within 3 min"
+    } else {
+        if (-not $Secret) {
+            $publicNote = "no data\.register_secret, cannot link the permanent URL"
+        } else {
+            Say "  linking permanent URL..."
+            $registered = Send-Heartbeat -TunnelUrl $public
+            if (-not $registered) { $publicNote = "Worker rejected or did not answer /__register" }
+        }
+    }
 }
+
+# The permanent URL is the contract, so verify the WORKER reaches THIS server,
+# not merely that the tunnel is up.
+if ($registered) {
+    $pubOkCount = 0
+    foreach ($i in 1..15) {
+        if ((Invoke-AppRequest -Url "$PermanentUrl/healthz" -TimeoutSec 10) -eq 200) { $pubOkCount++; break }
+        Start-Sleep -Seconds 2
+    }
+    if ($pubOkCount -gt 0) { $publicOk = $true }
+    else { $publicNote = "permanent URL registered but does not answer /healthz" }
+}
+
+# --- readiness --------------------------------------------------------------
+# Nothing above prints READY. Every one of these must hold first.
+function Test-Ready {
+    $fail = @()
+
+    if ((Invoke-AppRequest -Url "$Local/healthz") -ne 200) { $fail += "health endpoint" }
+    if ((Invoke-AppRequest -Url "$Local/login") -ne 200)   { $fail += "login page" }
+
+    $s = New-AppSession -BaseUrl $Local
+    if (-not $s) { $fail += "login (no data\.password)" ; return $fail }
+
+    $ui = Invoke-AppRequest -Url "$Local/" -Session $s
+    if ($ui -ne 200) { $fail += "authenticated UI (got $ui)" }
+
+    if ((Invoke-AppRequest -Url "$Local/api/library" -Session $s) -ne 200) { $fail += "library endpoint" }
+
+    # Thumbnail and Range need a rendered item; if the library is empty these
+    # are reported as skipped rather than failed, because there is nothing to
+    # serve yet on a fresh install.
+    $ids = @(Get-AppLibraryIds -BaseUrl $Local -Session $s)
+    if ($ids.Count -gt 0) {
+        $jid = $ids[0]
+        if ((Invoke-AppRequest -Url "$Local/api/library/$jid/thumb" -Session $s) -ne 200) { $fail += "thumbnail" }
+        $rc = Invoke-AppRequest -Url "$Local/api/library/$jid/video" -Session $s -Range "bytes=0-1023"
+        if ($rc -ne 206) { $fail += "HTTP Range (got $rc, want 206)" }
+    }
+
+    # Max must be the default the UI presents.
+    try {
+        $html = (Invoke-WebRequest -Uri "$Local/" -WebSession $s -UseBasicParsing -TimeoutSec 10).Content
+        if ($html -notmatch 'value="max"[^>]*\bselected\b' -and $html -notmatch '\bselected\b[^>]*value="max"' -and
+            $html -notmatch 'value="max"[^>]*\bchecked\b' -and $html -notmatch '\bchecked\b[^>]*value="max"') {
+            $fail += "Max not selected by default"
+        }
+    } catch { $fail += "could not read UI for Max default" }
+
+    $n = @(Get-NetTCPConnection -LocalPort $AppPort -State Listen -ErrorAction SilentlyContinue).Count
+    if ($n -ne 1) { $fail += "expected 1 listener, found $n" }
+
+    return $fail
+}
+
+Say "  running readiness checks..."
+$problems = @(Test-Ready)
+if ($problems.Count -gt 0) {
+    Say ""
+    Say "  NOT READY - the following checks failed:" "Red"
+    foreach ($p in $problems) { Say "    - $p" "Red" }
+    Stop-AppProcesses -Quiet | Out-Null
+    exit 1
+}
+
+$Pw = Get-AppPassword
+if (-not $Pw) { $Pw = "(see data\.password)" }
 
 Say ""
 Say "  ====================================================" "Cyan"
-Say "   OPEN THIS LINK" "Cyan"
-Say ""
-if ($registered) {
-    Say "   $Permanent" "White"
+if ($publicOk) {
+    Say "   SERVER READY" "Green"
+    Say ""
+    Say "   $PermanentUrl" "White"
     Say ""
     Say "   this link NEVER changes - bookmark it" "DarkGray"
-} elseif ($public) {
-    Say "   $public" "White"
-    Say ""
-    Say "   temporary link (changes each restart)" "DarkGray"
 } else {
-    Say "   http://127.0.0.1:$Port" "White"
+    Say "   LOCAL READY" "Green"
+    Say "   PUBLIC FAILED" "Red"
+    Say ""
+    Say "   reason: $publicNote" "Yellow"
+    Say ""
+    Say "   $Local" "White"
 }
 Say ""
 Say "   password:  $Pw" "White"
-Say ""
-Say "   works from your phone or any device" "DarkGray"
 Say "  ====================================================" "Cyan"
 Say ""
 Say "  Leave this window open. Press Ctrl+C to stop." "DarkGray"
@@ -175,31 +242,24 @@ try {
     $tick = 0
     while ($true) {
         Start-Sleep -Seconds 2
-        if ($srv.HasExited) { Say "  server stopped unexpectedly." "Red"; break }
-        # Heartbeat every 60s. If this PC dies or loses power, the Worker sees
-        # the gap and starts serving the Offline page on its own.
+        # Watch the PORT, not the launcher handle: the launcher can outlive the
+        # real server and vice versa.
+        if (-not (Get-AppListenerPid)) { Say "  server stopped unexpectedly." "Red"; break }
         $tick += 2
         if ($registered -and $tick -ge 60) {
             $tick = 0
-            if (-not (Send-Heartbeat -TunnelUrl $public)) {
-                Say "  heartbeat failed (will retry)" "DarkGray"
-            }
+            if (-not (Send-Heartbeat -TunnelUrl $public)) { Say "  heartbeat failed (will retry)" "DarkGray" }
         }
     }
 } finally {
     Say "  shutting down..." "DarkGray"
-    # Clean shutdown: flip to Offline immediately rather than waiting out the
-    # 3 minute staleness window.
     if ($registered -and $Secret) {
         try {
-            Invoke-RestMethod -Uri "$Permanent/__offline" -Method Post -TimeoutSec 10 `
+            Invoke-RestMethod -Uri "$PermanentUrl/__offline" -Method Post -TimeoutSec 10 `
                 -Headers @{ "x-register-secret" = $Secret } | Out-Null
             Say "  marked offline" "DarkGray"
         } catch { }
     }
-    foreach ($p in @($tun, $srv)) {
-        if ($p -and -not $p.HasExited) { try { Stop-Process -Id $p.Id -Force } catch { } }
-    }
-    # Renders now run inside the server process (app/swapper.py), so stopping
-    # the server stops them -- no separate render processes to clean up.
+    Stop-AppProcesses -Quiet | Out-Null
+    Say "  stopped" "DarkGray"
 }

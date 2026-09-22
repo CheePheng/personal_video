@@ -7,11 +7,12 @@ accounts, no per-use cost, no limits.
 
 **Double-click `start.bat`.**
 
-It prints a link like:
+Wait for it to print `SERVER READY`, then open:
 
-    https://joan-thumbnail-albert-scores.trycloudflare.com
+    https://faceswap.doctorwilddoctorwild.workers.dev
 
-Open that on any device — phone, laptop, anywhere. Then:
+This link never changes — bookmark it. Open it on any device — phone, laptop,
+anywhere. Then:
 
 1. Pick the **video** you want to edit
 2. Pick a **photo of the face** you want to put in it
@@ -20,7 +21,19 @@ Open that on any device — phone, laptop, anywhere. Then:
 
 Leave the black window open while it works. Closing it stops the site.
 
-The link is different every time you start it. That's normal.
+`SERVER READY` is printed only after the app has been checked end to end:
+health, login, the authenticated page, the library, a thumbnail, a byte-range
+request, the public link, Max selected, and exactly one server listening. If
+any of those fail it prints what failed instead, and if only the public link is
+down it says `LOCAL READY / PUBLIC FAILED` rather than claiming to be live.
+
+Two other commands, both safe to run any time:
+
+    powershell -File scripts\status.ps1    is it up, and is everything working?
+    powershell -File scripts\stop.ps1      stop it cleanly
+
+They only ever touch this project's own processes — a Python or cloudflared
+belonging to something else is never stopped. The app runs on local port 8765.
 
 ## How long it takes
 
@@ -89,8 +102,11 @@ and usage minus the idle floor. `scripts/clean_baseline.py` does exactly that
 ## If something goes wrong
 
 **The link doesn't open.**
-Wait ~20 seconds and retry — the tunnel takes a moment to route. If it still
-fails, close the window and run `start.bat` again for a fresh link.
+Run `powershell -File scripts\status.ps1`. It says whether the server is up and
+whether the public link reaches it. If `Server: RUNNING` but `Public` is not
+200, the tunnel dropped — run `scripts\stop.ps1` then `start.bat` to relink.
+If the startup window said `LOCAL READY / PUBLIC FAILED`, the app still works
+on this PC at <http://127.0.0.1:8765>.
 
 **"No face detected."**
 The face photo isn't clear enough, or no face was found in the video. Try a
