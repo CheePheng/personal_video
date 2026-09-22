@@ -1677,3 +1677,41 @@ with the EMA, no discontinuities -- so the loss is not flicker, it is missing
 evidence.
 
 Nothing shipped. Max remains photos-only fixed fusion.
+
+### V2.10 addendum: the video-only fallback
+
+The pose-conditioned tournament answered "do these videos improve a photo
+set?" -- they cannot, because the video person is not any of the photo
+people. One question the same clips CAN answer is the fallback case: a user
+who has NO usable photos, only a video. There the comparison is not
+photos-vs-video, it is video-vs-nothing, and it is constructible.
+
+Acquisition caps at five references and hands them to the unchanged
+production fusion, exactly as V2.8 specified. Scored on rendered output
+against the target-pose set:
+
+    strategy               0-10     10-25    25-40    40-55    55+
+    C  clip2 best 5        0.8353   0.8447   0.8488   0.8269   0.8029
+    D  clip3 best 5        0.8287   0.8308   0.8195   0.8087   0.8135
+    E  both, best 5        0.8287   0.8308   0.8195   0.8087   0.8135
+       both, best 12       0.8177   0.8218   0.8202   0.8007   0.7973
+
+Three things follow.
+
+A SINGLE GOOD CLIP BEATS TWO. Strategy E is byte-identical to D: when the
+selector ranks all 208 observations by quality, clip3's frames win every
+slot, and clip2's contribution is zero. That is the cap doing its job --
+more footage did not buy more votes -- but it also means "add another
+video" is not a lever. Clip2 alone (C) is the best result here, better
+than the set that contains it.
+
+MORE REFERENCES IS WORSE. Raising the cap from 5 to 12 loses at all five
+pose bands (-0.018 mean). The fifth-best reference is already marginal;
+the twelfth is dilution. The V2.8 cap of five is not a compromise, it is
+near the optimum for this material.
+
+THESE NUMBERS ARE NOT COMPARABLE TO THE PHOTO CONTROL. Every figure above
+is judged against an anchor derived from the same video person, so it
+measures internal consistency of the video path, not parity with photos.
+It establishes that the fallback produces a coherent identity across the
+full pose range; it does not establish that it matches a good photo set.
