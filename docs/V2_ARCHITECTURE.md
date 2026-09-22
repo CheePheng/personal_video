@@ -1332,3 +1332,30 @@ paint over foreground.
 Flat to ~48 px, graceful to ~34 px, and a cliff below 30 px. Detection stays
 at 100% the whole way down, so what runs out is identity information in the
 pixels, not the detector. No amount of processing recovers it.
+
+## Checkpoint boundaries on real footage
+
+The earlier boundary test ran on synthetic clips with almost no motion.
+Redone on real footage, the first attempt reported a spike: 17.57 pixel
+change at boundaries against 1.00 elsewhere.
+
+That was the fixture, not the renderer. The long clip was built by looping a
+150-frame source four times, so the segment boundaries landed at frames
+150/300/450 -- exactly the loop seams. The source itself jumps 17.41 there;
+the renderer measured 17.57, faithfully reproducing a real content cut and
+adding 0.16.
+
+On 24 seconds of genuinely continuous real footage with no cuts:
+
+| | boundary mean | boundary max | elsewhere mean | elsewhere p99 |
+|---|---|---|---|---|
+| source | 1.0563 | 1.6896 | 1.3951 | 4.8525 |
+| render | 1.6003 | 2.1141 | 1.4546 | 4.9089 |
+
+Boundary maximum 2.11 against a p99 of 4.91 elsewhere, and 720/720 frames
+both continuous and segmented. No visible seam; serialized temporal state
+and warm-up frames are not needed.
+
+A method note worth keeping: a looped clip is the wrong fixture for a
+boundary test, because the loop period tends to divide evenly into the
+segment length and the two seams coincide.
