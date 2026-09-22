@@ -1631,3 +1631,49 @@ As TARGET footage they cover 0-10 (23 frames), 10-25 (69), 25-40 (26),
 
 Kept at `data/testclips/user/` as a real-world identity for robustness
 checks. Not usable as the quality-matched source video the experiment needs.
+
+## V2.10: pose-conditioned identity on the real user videos
+
+The two supplied Instagram clips are the only source video available, so the
+experiment was run on them as-is rather than waiting for better material.
+
+Fully analysed at stride 2: 208 usable observations, yaw -51 to +31, faces
+82-195 px. After pose+appearance dedup, 40 representative observations with
+coverage left_strong 2, left_mild 12, frontal 15, right_mild 10,
+right_strong 1.
+
+One comparison in the original plan is not constructible. The person in these
+videos has no photographs anywhere in the project -- best cosine against the
+three existing photo identities is 0.0018, 0.0380 and 0.0872, all different
+people. Any "photo set" for them must be cut from these same clips, so
+"photos vs photos+video" would compare video frames against video frames.
+That is reported rather than faked.
+
+What IS constructible is the experiment that mattered most: pose-conditioned
+identity, since it needs only multi-angle source evidence.
+
+| strategy | 0-10 | 10-25 | 25-40 | 40-55 | 55+ | vector delta |
+|---|---|---|---|---|---|---|
+| fixed anchor | **0.8111** | **0.8155** | **0.8158** | **0.7950** | **0.7802** | 0.00000 |
+| pose-conditioned | 0.8117 | 0.8139 | 0.8123 | 0.7861 | 0.7562 | 0.00586 |
+
+Delta: +0.0005, -0.0015, -0.0036, -0.0089, **-0.0240**.
+
+Neutral at frontal and progressively worse as yaw rises -- the exact opposite
+of the intended effect, and the gradient is the diagnostic. Source coverage
+reaches only +31 degrees on the right. Asked for a target at +60 or +75, the
+Gaussian saturates on those same +31 observations, because they are the
+nearest evidence that exists. Conditioning cannot supply matching evidence it
+does not have; it can only re-weight mid-range frames, diluting the anchor
+for no gain. The penalty grows with the gap between target pose and the
+nearest real observation.
+
+This is a coverage result, not a refutation of pose conditioning. The method
+is sound and would need source evidence out to 55-75 degrees to be tested
+properly. These clips reach 31 on one side and 51 on the other.
+
+Temporal behaviour was acceptable -- mean frame-to-frame vector delta 0.00586
+with the EMA, no discontinuities -- so the loss is not flicker, it is missing
+evidence.
+
+Nothing shipped. Max remains photos-only fixed fusion.
