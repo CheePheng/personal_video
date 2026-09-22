@@ -1489,3 +1489,67 @@ reliably tell obstruction from shadow.
 
 Production is unchanged: alphaface_256 + no enhancer + mask:model + colour
 match ON, over 1-5 uploaded photos.
+
+# V2.9: valid target poses built; occlusion detector half-fixed
+
+Two V2.8 defects were addressed. One is fixed, one is a hard limit.
+
+## Target pose coverage -- FIXED
+
+V2.8's render benchmark sampled 8 frames per clip, which landed almost
+entirely in the 0-10 degree bucket, so it never tested the case source video
+exists for. The `real2` clips top out at 40 degrees and contain no 40-55 or
+55+ samples at all.
+
+A NASA Crew-9 press conference (public domain, 27 min, 720p) supplies real
+strong rotation, because panellists turn to face questioners:
+
+| band | frames found | best sample |
+|---|---|---|
+| 0-10 | 224 | yaw -10.0, face 204 px |
+| 10-25 | 164 | yaw -24.9, face 198 px |
+| 25-40 | 108 | yaw +39.8, face 221 px |
+| 40-55 | 30 | yaw +53.5, face 218 px |
+| 55+ | 64 | yaw +88.7, face 218 px |
+
+20 two-second clips cut across all five bands, in `data/testclips/pose/`.
+
+## Occlusion detector -- exposure invariance fixed, hands still invisible
+
+The luminance heuristic was replaced with the two semantic models already
+shipped: BiSeNet 19-class face parsing and XSeg occlusion.
+
+Exposure invariance is now excellent. The same face at three exposures:
+
+| identity | visible-fraction spread |
+|---|---|
+| source_a | 0.008 |
+| w_photo0 | 0.003 |
+| m_melvin | 0.004 |
+
+Against the old detector, which swung 0.874 -> 0.566 on nothing but
+brightness. Dark skin, shadow and low light no longer read as occlusion.
+
+Sensitivity is where it stops:
+
+| obstruction | visibility drop | detected |
+|---|---|---|
+| sunglasses | 0.251 | yes |
+| hair across face | 0.119 | yes |
+| hand over eye | 0.000 | **no** |
+| peace sign on cheek | 0.000 | **no** |
+
+The cause is in the training data, not the threshold. CelebAMask-HQ has no
+hand class, so BiSeNet labels a hand as skin -- its face-class coverage moves
+0.321 -> 0.320 with a hand across the eye. XSeg was trained on hair and
+objects, not skin-on-skin, and moves 0.441 -> 0.413. Neither model can see a
+hand on a face.
+
+So the peace-sign case, which motivated this whole line of work, is not
+detectable with any model on this machine. Detecting it needs a hand
+segmentation model, which is a new dependency justified only if occlusion
+weighting were otherwise shown to help -- and V2.6 measured that it does not.
+
+The detector is therefore NOT wired into anything. It is committed as
+`app/render/occlusion.py` with its validation harness, honest about what it
+can and cannot see.
