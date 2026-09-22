@@ -1,0 +1,139 @@
+{
+  "algorithm_version": 1,
+  "report": {
+    "n_candidates": 1123,
+    "n_selected": 5,
+    "selection": [
+      "anchor: src_video_w.mp4@519.00s (yaw 5.4)",
+      "left_mild: src_video_w.mp4@182.00s (yaw -14.1)",
+      "right_mild: src_video_w.mp4@181.00s (yaw 10.1)",
+      "left_strong: src_video_w.mp4@289.50s (yaw -30.0)",
+      "right_strong: src_video_w.mp4@172.50s (yaw 28.7)"
+    ],
+    "bands_covered": [
+      "frontal",
+      "left_mild",
+      "left_strong",
+      "right_mild",
+      "right_strong"
+    ],
+    "from_photo": 0,
+    "from_video": 5,
+    "selected": [
+      {
+        "name": "src_video_w.mp4@519.00s",
+        "yaw": 5.4,
+        "pitch": -17.5,
+        "roll": 3.9,
+        "face_px": 128.2,
+        "sharpness": 180.8,
+        "detector_conf": 0.825,
+        "exposure": 46.0,
+        "visible_fraction": 0.791,
+        "occluded_regions": [
+          "forehead",
+          "jaw",
+          "right_cheek"
+        ],
+        "consensus": 0.904,
+        "duplicate_of": null,
+        "dup_penalty": 1.0,
+        "weight": 0.0,
+        "rejected": null
+      },
+      {
+        "name": "src_video_w.mp4@182.00s",
+        "yaw": -14.1,
+        "pitch": 3.6,
+        "roll": 8.5,
+        "face_px": 132.0,
+        "sharpness": 157.9,
+        "detector_conf": 0.831,
+        "exposure": 47.0,
+        "visible_fraction": 0.705,
+        "occluded_regions": [
+          "forehead",
+          "jaw",
+          "left_cheek",
+          "right_cheek"
+        ],
+        "consensus": 0.8404,
+        "duplicate_of": null,
+        "dup_penalty": 1.0,
+        "weight": 0.0,
+        "rejected": null
+      },
+      {
+        "name": "src_video_w.mp4@181.00s",
+        "yaw": 10.1,
+        "pitch": -7.3,
+        "roll": 0.1,
+        "face_px": 129.3,
+        "sharpness": 120.1,
+        "detector_conf": 0.827,
+        "exposure": 44.0,
+        "visible_fraction": 0.631,
+        "occluded_regions": [
+          "forehead",
+          "jaw",
+          "left_cheek",
+          "left_eye",
+          "right_cheek"
+        ],
+        "consensus": 0.9357,
+        "duplicate_of": null,
+        "dup_penalty": 1.0,
+        "weight": 0.0,
+        "rejected": null
+      },
+      {
+        "name": "src_video_w.mp4@289.50s",
+        "yaw": -30.0,
+        "pitch": -1.0,
+        "roll": 4.4,
+        "face_px": 223.7,
+        "sharpness": 469.1,
+        "detector_conf": 0.853,
+        "exposure": 31.0,
+        "visible_fraction": 0.913,
+        "occluded_regions": [
+          "left_cheek"
+        ],
+        "consensus": 0.8497,
+        "duplicate_of": null,
+        "dup_penalty": 1.0,
+        "weight": 0.0,
+        "rejected": null
+      },
+      {
+        "name": "src_video_w.mp4@172.50s",
+        "yaw": 28.7,
+        "pitch": -0.7,
+        "roll": -0.6,
+        "face_px": 192.8,
+        "sharpness": 280.2,
+        "detector_conf": 0.865,
+        "exposure": 33.0,
+        "visible_fraction": 0.852,
+        "occluded_regions": [
+          "jaw"
+        ],
+        "consensus": 0.8771,
+        "duplicate_of": null,
+        "dup_penalty": 1.0,
+        "weight": 0.0,
+        "rejected": null
+      }
+    ],
+    "video_stats": {
+      "sampled": 1200,
+      "no_face": 55,
+      "rejected": 22,
+      "wrong_person": 0,
+      "accepted": 1123
+    },
+    "n_photos_in": 0,
+    "fingerprint": "61342c1ad9e773792dc69d62dc1e6f43",
+    "cached": false
+  }
+}

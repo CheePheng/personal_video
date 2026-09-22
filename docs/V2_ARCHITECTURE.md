@@ -1418,3 +1418,74 @@ does not currently exist in runnable form.
 Production is unchanged: `alphaface_256` + no enhancer + `mask:model` +
 colour match ON, conditioned on one quality-weighted 512-d vector from 1-5
 photos.
+
+# V2.8: source video as reference acquisition -- measured, not shipped
+
+V2.7 established that no runnable swapper accepts multiple references. The
+V2.8 idea was to use source video differently: not as a fusion input, but as
+a way to FIND better reference images, capping the result at five and handing
+them to the unchanged production fusion. The cap is structural, so frame
+count cannot become voting power at the fusion stage.
+
+It does not work, and two bugs found along the way matter more than the
+headline result.
+
+## Result
+
+All strategies judged on rendered output against a fixed anchor photo:
+
+| strategy | ArcFace | p5 | SFace |
+|---|---|---|---|
+| A clean 5 photos (control) | **0.8239** | 0.8138 | 0.6860 |
+| B video only (5 acquired) | 0.7380 | 0.7256 | 0.6556 |
+| C 2 photos + video | 0.7649 | 0.7518 | 0.6703 |
+| D 5 photos + video | 0.7876 | 0.7761 | 0.6632 |
+
+Every video-assisted strategy loses to photos alone, and the ordering is
+monotone in how many photos survive selection. Video does not help.
+
+## Bug 1: the cap moved the failure upstream
+
+V2.6 failed because ~24 video frames outvoted 4 photos inside one embedding
+average. The <=5 cap was designed to prevent exactly that, and it did -- at
+the fusion stage. The failure simply relocated into candidate SELECTION: a
+15-minute video yields ~1123 candidates against 4 photos, so ranking by
+quality picks a video frame for every pose band by sheer count. The first
+run selected 0 photos out of 5 available and chose a 128px/181-sharpness
+anchor over an available 209px/302 photo, purely because it sat nearer 0
+degrees yaw.
+
+Fixed by anchoring on uploaded photos and letting them win their bands, with
+video filling only genuinely uncovered poses. That raised B->D from 0.7380
+to 0.7876 -- real improvement, still a loss.
+
+## Bug 2: the visibility metric measures exposure, not occlusion
+
+This one invalidates the occlusion-weighting premise of V2.6 as well.
+
+Taking one unmodified face and only darkening it:
+
+| | exposure | visible fraction | reported occluded |
+|---|---|---|---|
+| original | 71 | 0.874 | none |
+| darkened | 21 | 0.566 | both eyes |
+
+The face did not change. The luminance test treats normal shadow on a dark
+photo as "crushed to black", so it fires on unobstructed faces. On the test
+set it rated a CLEAN photo as more occluded (0.616) than the same photo with
+a hand across the cheek (0.797), because skin-toned fingers RAISE median
+exposure from 27 to 70 and move it toward the healthy band.
+
+Any result that weighted references by "visibility" -- including V2.6's
+occlusion-aware fusion -- was partly measuring how bright the photo was.
+
+## Conclusion
+
+Source video stays out of production, now for a measured reason rather than
+an assumed one. The acquisition framing was sound; the evidence says the
+five photos a user uploads are already better than anything selection can
+assemble from video, and the machinery meant to detect obstruction cannot
+reliably tell obstruction from shadow.
+
+Production is unchanged: alphaface_256 + no enhancer + mask:model + colour
+match ON, over 1-5 uploaded photos.
