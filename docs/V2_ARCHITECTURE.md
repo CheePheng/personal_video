@@ -1553,3 +1553,49 @@ weighting were otherwise shown to help -- and V2.6 measured that it does not.
 The detector is therefore NOT wired into anything. It is committed as
 `app/render/occlusion.py` with its validation harness, honest about what it
 can and cannot see.
+
+## The source-video question, answered on valid target poses
+
+With all five bands populated, the tournament finally measures what it was
+always supposed to. ArcFace identity against a fixed anchor photo:
+
+| strategy | 0-10 | 10-25 | 25-40 | 40-55 | 55+ |
+|---|---|---|---|---|---|
+| 5 photos | **0.8354** | **0.8430** | **0.8419** | **0.8264** | **0.8092** |
+| photos + video | 0.8088 | 0.8190 | 0.8186 | 0.7987 | 0.7827 |
+| video only | 0.7634 | 0.7739 | 0.7752 | 0.7583 | 0.7485 |
+
+Delta for photos+video: -0.0266, -0.0240, -0.0233, -0.0277, -0.0265.
+
+Video loses at **every** band, by a near-constant margin, including the
+strong profiles it was supposed to rescue. The acquisition worked -- it
+selected 2 photos and 3 video frames covering all five pose bands -- and the
+result is still worse than photos alone.
+
+The near-constant offset is the tell. If video were supplying genuinely
+useful profile evidence, the penalty would shrink or reverse as yaw
+increased. It does not move. The video frames are simply weaker observations
+(smaller, softer, more compressed than the uploaded photos), and averaging
+them into one 512-d vector dilutes it by a fixed amount regardless of what
+the target is doing.
+
+Also worth recording from the photos-only run: identity degrades gracefully
+with pose, 0.8354 frontal to 0.8092 at 55+, a loss of only 0.026 across the
+entire range. The single-vector representation holds up at profile far
+better than expected, which is part of why extra profile evidence has little
+to add.
+
+## Source video: closed
+
+SOURCE VIDEO TESTED CORRECTLY. NO MEANINGFUL BENEFIT UNDER THE CURRENT
+SINGLE-512D ARCHITECTURE.
+
+Tested three ways, each time with the previous objection fixed:
+V2.4 as global fusion, V2.8 as capped reference acquisition, V2.9 as capped
+acquisition measured on a valid five-band target set. It lost every time,
+and on the final run it lost at every pose.
+
+Not to be revisited until a swapper exists that accepts multiple references
+AND edits existing footage. V2.7 surveyed that space: FuseAnyPart composes
+different people's parts, AnyID generates rather than edits. Neither
+performs this product's operation.
