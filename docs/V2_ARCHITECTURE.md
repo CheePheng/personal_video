@@ -1255,3 +1255,80 @@ Two smaller ones alongside it: the colour correction was applied twice per
 frame when temporal smoothing was on (raw, then smoothed on top of the
 already-corrected patch), and `SceneCutDetector` downsampled every frame four
 times instead of once.
+
+# V2.5: quality axes measured on real footage
+
+The synthetic fixtures have no eyes that blink, no mouth that speaks and
+almost no head rotation, so eyes, mouth, profile and temporal behaviour
+could not be evaluated on them at all. Six 720p clips cut from a
+public-domain single-person interview reel supply real speech, blinking and
+51 degrees of genuine yaw.
+
+Identity on real footage is better than on synthetics -- ArcFace 0.9122 and
+SFace 0.8179, against 0.8624/0.7720 on the A->B set. Real skin detail gives
+the recogniser more to work with.
+
+## Eyes and mouth: the target keeps its performance
+
+Both metrics compare the OUTPUT against the INPUT frame, not against the
+source photo. Only appearance should change; gaze, blink, mouth opening and
+jaw timing belong to the target. A swap that imposes the source's expression
+scores badly here even with perfect identity.
+
+Mouth-opening correlation between input and output is the sharpest measure
+of that:
+
+| swapper | frontal talking | strong profile |
+|---|---|---|
+| alphaface | 0.5633 | 0.7225 |
+| ghost_1 | 0.4162 | **0.2441** |
+
+GHOST's mouth stops tracking the speech at profile. That is the
+frozen-grimace failure, quantified.
+
+## Profile: no shot-level switching is justified
+
+| swapper | 0-10 | 10-20 | 20-30 | 30+ |
+|---|---|---|---|---|
+| alphaface | 0.9149 | 0.9093 | 0.9079 | 0.9102 |
+| hyperswap_1b | 0.8237 | 0.8174 | 0.8136 | 0.8158 |
+| ghost_2 | 0.8071 | 0.7999 | 0.7961 | 0.8038 |
+
+AlphaFace loses 0.005 from frontal to 30+ and leads by ~0.09 at every angle,
+so there is no pose regime where switching models would win.
+
+## Realistic occlusion
+
+`F_occlusion` is a solid black rectangle; nothing real is opaque, edgeless
+and perfectly dark. Replaced with fingers crossing the cheek (34.6% of the
+face box), hair strands, and thin glasses frames with tinted transparent
+lenses, composited over real footage.
+
+| clip | mask | arc | maskJitter | occluder kept |
+|---|---|---|---|---|
+| hand | model | **0.8457** | 0.00046 | 0.925 |
+| hand | full | 0.7045 | 0.04629 | 0.982 |
+| hair | model | **0.8653** | 0.00000 | 0.963 |
+| hair | full | 0.6838 | 0.07079 | 0.982 |
+| glasses | model | **0.8877** | 0.00011 | 0.974 |
+| glasses | full | 0.4315 | 0.04849 | 0.989 |
+
+`model` leads by +0.11 to +0.45 identity with 60-300x lower mask jitter.
+`full` preserves occluder pixels slightly better and costs up to 0.45
+identity to do it. Verified visually: hair and glasses stay in front of the
+swapped face either way, because the swapper's own mask already declines to
+paint over foreground.
+
+## Practical face-size floor
+
+| detected face | ArcFace | SFace | detection rate |
+|---|---|---|---|
+| 192 px | 0.9137 | 0.8234 | 1.00 |
+| 96 px | 0.9122 | 0.8183 | 1.00 |
+| 48 px | 0.8940 | 0.8088 | 1.00 |
+| 34 px | 0.8526 | 0.7709 | 1.00 |
+| 22 px | **0.6665** | 0.6177 | 1.00 |
+
+Flat to ~48 px, graceful to ~34 px, and a cliff below 30 px. Detection stays
+at 100% the whole way down, so what runs out is identity information in the
+pixels, not the detector. No amount of processing recovers it.
