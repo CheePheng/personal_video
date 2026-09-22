@@ -72,6 +72,30 @@ class RenderOptions:
     end_time: Optional[float] = None
 
 
+def _MAX_CONFIG() -> PipelineConfig:
+    """The strongest VERIFIED configuration. One definition, one place.
+
+    Every element of this was chosen by measurement and each is recorded in
+    the else-branch of apply_preset below:
+
+      alphaface_256  won the A->B swapper tournament once the mask stopped
+                     suppressing identity, and preserves the target's mouth
+                     ~3x better than GHOST at profile (mouth-opening
+                     correlation 0.72 vs 0.24).
+      no enhancer    every restorer degrades identity monotonically with
+                     blend while adding sharpness -- the "sharper generic
+                     face" failure.
+      mask=model     +0.11 to +0.45 identity over parsing/XSeg on realistic
+                     occlusion, with 60-300x lower mask jitter.
+      colour on      identity unchanged, colour discontinuity 21% better on
+                     dark footage.
+
+    Real-footage identity: ArcFace 0.9122, SFace 0.8179.
+    """
+    return PipelineConfig(swapper="alphaface_256", enhancer=None,
+                          enhancer_blend=0.0, mask="model", color_match=True)
+
+
 def apply_preset(opts: "RenderOptions") -> "RenderOptions":
     """Resolve ``opts.quality`` into the actual pipeline it names.
 
@@ -89,6 +113,13 @@ def apply_preset(opts: "RenderOptions") -> "RenderOptions":
     to each other and to the default.
     """
     if opts.config is not None:
+        return opts
+    # "max" and "quality" are the same pipeline under two names. Max is what
+    # the UI offers; quality is kept so existing jobs, saved options and the
+    # library's stored records keep resolving. Stated explicitly rather than
+    # left to the else-branch, so a future preset cannot silently capture it.
+    if opts.quality in ("max", "quality", "balanced"):
+        opts.config = _MAX_CONFIG()
         return opts
     if opts.quality == "auto":
         raise RenderError(
@@ -175,9 +206,9 @@ def apply_preset(opts: "RenderOptions") -> "RenderOptions":
         #
         # alphaface takes it: best absolute source likeness, top-2 on BOTH
         # judges, and the lowest mouth-opening drift of all six.
-        opts.config = PipelineConfig(swapper="alphaface_256",
-                                     enhancer=None, enhancer_blend=0.0,
-                                     mask="model")
+        # Same object as Max, from the one definition above, so the two can
+        # never drift apart.
+        opts.config = _MAX_CONFIG()
     return opts
 
 

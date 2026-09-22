@@ -238,7 +238,7 @@ class JobRunner(threading.Thread):
         from app.render import benchmark, longform, pipeline
 
 
-        quality = self.opts.get("quality", "quality")
+        quality = self.opts.get("quality", "max")
         opts = pipeline.RenderOptions(
             quality=quality,
             swap_all_faces=(self.opts.get("face_mode") == "many"),

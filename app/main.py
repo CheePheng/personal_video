@@ -265,14 +265,20 @@ def resolve_media(media_id: str) -> Path:
 # The presets themselves live in app/swapper.py (QUALITY_PRESETS), next to the
 # code that acts on them -- one source of truth, so a preset cannot be accepted
 # here and then silently ignored by the pipeline.
-QUALITY = ("fast", "quality", "auto")
+# "max" is the UI's name for the strongest verified pipeline; "quality" and
+# "balanced" are accepted as aliases so jobs saved before the rename, and the
+# records already in the library, keep resolving. All three land on the same
+# config via pipeline.apply_preset. "auto" stays accepted at the API for the
+# benchmark harnesses, but is no longer offered in the UI: it can select a
+# weaker model, and measurement put it behind the fixed pipeline.
+QUALITY = ("fast", "max", "quality", "balanced", "auto")
 
 
 class JobReq(BaseModel):
     # Media ids issued by /api/upload/complete -- never filesystem paths.
     source_ids: list[str] = []
     target_id: str = ""
-    quality: str = "quality"
+    quality: str = "max"
     face_mode: str = "reference"
     engine: str = "v2"          # v2 | v1 (v1 kept as the regression fallback)
     # Optional render window, in seconds from the start of the file. There is
@@ -300,7 +306,7 @@ def create_job(req: JobReq) -> dict:
         raise HTTPException(400, f"end time ({end}s) must be after start ({start}s)")
 
     opts = {
-        "quality": req.quality if req.quality in QUALITY else "quality",
+        "quality": req.quality if req.quality in QUALITY else "max",
         "face_mode": req.face_mode,
         "engine": "v1" if req.engine == "v1" else "v2",
         "n_sources": len(sources),
