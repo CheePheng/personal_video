@@ -1359,3 +1359,62 @@ and warm-up frames are not needed.
 A method note worth keeping: a looped clip is the wrong fixture for a
 boundary test, because the loop period tends to divide evenly into the
 segment length and the two seams coincide.
+
+# V2.7: multi-reference identity survey
+
+V2.6 established the ceiling precisely: per-region source analysis works --
+a peace sign over a cheek is detected correctly -- but every installed
+swapper accepts exactly one 512-d identity vector, so there is nowhere to
+send that knowledge. Verified again across all nine installed models:
+
+| model | identity input |
+|---|---|
+| hyperswap_1a/1b/1c | `source [1,512]` |
+| alphaface_256 | `source [batch,512]` |
+| ghost_1/2/3 | `source [1,512]` |
+| simswap_256 / _512 | `source [1,512]` |
+
+No installed model supports multi-reference or spatial identity
+conditioning. The question was therefore whether an external architecture
+does, and whether it can run here.
+
+## Candidates with released weights
+
+**FuseAnyPart** (MIT weights, 3.6 GB, `fap.bin`). Genuinely multi-reference
+-- `XFormersMultirefAttnProcessor` is cross-attention over several reference
+images, not embedding averaging. **Wrong task.** It composes a face from
+*different people's* parts (`_masked_eyes`, `_masked_nose`, `_masked_mouth`
+from separate identities) to create novel characters. The paper is explicit:
+parts "from different people" assembled into a new face. It is also
+still-image only. Our goal is the inverse -- one identity, maximum fidelity,
+on video. Not downloaded, because the task mismatch is decisive and no
+measurement would change it.
+
+**AnyID** (`anyid_lora.safetensors`, CC-BY-NC-SA-4.0). Architecturally
+exactly right: "up to five images **or** one video", first reference primary
+and the rest auxiliary, explicitly built to overcome single-reference
+limits. **Wrong operation.** It is a LoRA on the Wan2.2 TI2V-5B backbone and
+*generates* new video from a prompt; it does not swap identity onto existing
+target footage. The backbone is 34.2 GB against 14.7 GB of usable VRAM on
+this card. Non-commercial licence besides.
+
+**GSwap / MMFace-DiT.** GSwap is video head-swapping but has no released
+weights. MMFace-DiT releases code but is multimodal face *generation* from
+text plus spatial controls, not identity transfer across references.
+
+## Conclusion
+
+The architecture class that would use multi-view source evidence exists and
+is being actively published, but as of this survey every implementation with
+released weights either composes *different* people (FuseAnyPart) or
+*generates* rather than *edits* video (AnyID). Neither can perform the
+product's operation: put one specific person's identity onto one specific
+existing target video.
+
+The gap is real, not a matter of effort. A swapper that accepts multiple
+references and edits existing footage is what unlocks source video, and it
+does not currently exist in runnable form.
+
+Production is unchanged: `alphaface_256` + no enhancer + `mask:model` +
+colour match ON, conditioned on one quality-weighted 512-d vector from 1-5
+photos.
