@@ -1599,3 +1599,35 @@ Not to be revisited until a swapper exists that accepts multiple references
 AND edits existing footage. V2.7 surveyed that space: FuseAnyPart composes
 different people's parts, AnyID generates rather than edits. Neither
 performs this product's operation.
+
+## V2.10: the user-supplied clips, assessed
+
+Two Instagram screen recordings were supplied as candidate research
+material. Measured against what V2.10 requires:
+
+| property | user clip 2 | user clip 3 | NASA interview | NASA portraits |
+|---|---|---|---|---|
+| face size | 155 px | 112 px | 161 px | 338 px |
+| sharpness (Laplacian) | 37 | 63 | 65 | 563 |
+| high-freq energy | 0.332 | — | — | 0.519 |
+| exposure | 114 | 113 | 75 | 130 |
+| yaw span | **60 deg** | 47 deg | 40 deg | 6 deg |
+
+Both clips are the same person (cosine 0.6688), so together they are a
+genuine third identity with real rotation -- the widest yaw span of any
+source material in the project, and the best exposure.
+
+What they cannot do is settle V2.10's central question, which is whether
+*quality-matched* source video can beat photos. At identical crop size the
+user clip carries 0.332 of its energy in high frequencies against a NASA
+portrait's 0.519, and visual inspection is unambiguous: the clip shows no
+skin texture at all -- no pores, no fine detail, just compression blocks --
+where the portrait resolves individual freckles. That is Instagram
+re-encoding plus upscaling from a phone screen grab, and no processing
+recovers it.
+
+As TARGET footage they cover 0-10 (23 frames), 10-25 (69), 25-40 (26),
+40-55 (4) and 55+ (0), so they also cannot exercise the extreme-pose bands.
+
+Kept at `data/testclips/user/` as a real-world identity for robustness
+checks. Not usable as the quality-matched source video the experiment needs.
